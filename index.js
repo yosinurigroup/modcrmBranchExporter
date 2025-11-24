@@ -313,17 +313,16 @@ async function processBranch(params) {
                     const custFolderId = match[1];
                     console.log(`Processing customer: ${cust.fullName} (${custFolderId})`);
 
-                    // Create customer folder in date folder
-                    const { data: custMeta } = await drive.files.get({ fileId: custFolderId, fields: 'name' });
+                    // Create customer folder in date folder with fullName from payload
                     const { data: newCustFolder } = await drive.files.create({
                         resource: {
-                            name: custMeta.name,
+                            name: cust.fullName,  // Use fullName from payload instead of original folder name
                             mimeType: 'application/vnd.google-apps.folder',
                             parents: [dateFolderId]
                         },
                         fields: 'id'
                     });
-                    console.log(`Created customer folder: ${custMeta.name}`);
+                    console.log(`Created customer folder: ${cust.fullName}`);
 
                     // Copy only the project folders (by ID) from customer folder
                     if (projectFolderIds.length > 0) {
