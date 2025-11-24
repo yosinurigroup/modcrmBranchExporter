@@ -91,9 +91,23 @@ async function getOrCreateFolder(drive, parentId, folderName) {
     return folder.data.id;
 }
 
-async function copyFolderRecursively(drive, sourceId, targetParentId) {
+async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFolderNames = null) {
     // Get source folder name
     const { data: srcMeta } = await drive.files.get({ fileId: sourceId, fields: 'name' });
+
+    // If we have a list of allowed folders and this folder is not in the list, skip it
+    if (allowedFolderNames && allowedFolderNames.length > 0) {
+        const folderName = srcMeta.name;
+        const isAllowed = allowedFolderNames.some(allowed =>
+            folderName.toLowerCase().includes(allowed.toLowerCase()) ||
+            allowed.toLowerCase().includes(folderName.toLowerCase())
+        );
+
+        if (!isAllowed) {
+            console.log(`Skipping folder: ${folderName} (not in allowed list)`);
+            return null;
+        }
+    }
 
     // Create new folder in target
     const { data: newFolder } = await drive.files.create({
@@ -113,7 +127,7 @@ async function copyFolderRecursively(drive, sourceId, targetParentId) {
         });
         for (const file of res.data.files) {
             if (file.mimeType === 'application/vnd.google-apps.folder') {
-                await copyFolderRecursively(drive, file.id, newFolderId);
+                await copyFolderRecursively(drive, file.id, newFolderId, allowedFolderNames);
             } else {
                 copyLimiter(() => copyFile(drive, file.id, file.name, newFolderId));
             }
@@ -172,7 +186,7 @@ async function appendLog(sheets, branchId, sheetLink, folderLink, statusCode, re
 }
 
 // ====== DATA FILTERING ======
-async function filterData(drive, sheets, customersData) {
+async function filterData(drive, sheets, customersData, branchName) {
     // Load Projects and Customers data from SOURCE_SHEET_ID
     const projectsRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Projects!A1:Z' });
     const customersRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Customers!A1:Z' });
@@ -186,16 +200,18 @@ async function filterData(drive, sheets, customersData) {
     // Extract customer IDs from the payload
     const customerIds = customersData.map(c => c.customerId);
     console.log('Filtering for customer IDs:', customerIds);
+    console.log('Filtering for branch name:', branchName);
 
-    // Find the Customer ID column index in both sheets
-    // Assuming the column is named something like "Customer ID", "customerId", or "CID"
+    // Find the Customer ID and Branch Name column indices
     const pCustomerIdCol = pHeader.findIndex(h => h && (h.toLowerCase().includes('customer') || h.toLowerCase().includes('cid')));
+    const pBranchNameCol = pHeader.findIndex(h => h && h.toLowerCase().includes('branch'));
     const cCustomerIdCol = cHeader.findIndex(h => h && (h.toLowerCase().includes('customer') || h.toLowerCase().includes('cid')));
 
-    // Filter Projects: only rows where customer ID matches
+    // Filter Projects: only rows where customer ID matches AND branch name matches
     const filteredProjects = pRows.slice(1).filter(row => {
         const rowCustomerId = row[pCustomerIdCol];
-        return customerIds.includes(rowCustomerId);
+        const rowBranchName = row[pBranchNameCol];
+        return customerIds.includes(rowCustomerId) && rowBranchName === branchName;
     });
 
     // Filter Customers: only rows where customer ID matches
@@ -255,7 +271,7 @@ async function processBranch(params) {
     });
 
     // 3) Filter and write data
-    const { pHeader, filteredProjects, cHeader, filteredCustomers } = await filterData(drive, sheets, params.customersData);
+    const { pHeader, filteredProjects, cHeader, filteredCustomers } = await filterData(drive, sheets, params.customersData, branchName);
     await writeSheet(sheets, newSheetId, 'Projects', pHeader, filteredProjects);
     await writeSheet(sheets, newSheetId, 'Customers', cHeader, filteredCustomers);
 
@@ -267,7 +283,14 @@ async function processBranch(params) {
         }
     });
 
-    // 4) Copy each customer folder into the date folder
+    // 4) Extract project folder names from projectsData
+    const projectFolderNames = params.projectsData && params.projectsData.length > 0
+        ? params.projectsData.map(p => p.projectFolders).filter(Boolean)
+        : null;
+
+    console.log('Project folders to copy:', projectFolderNames);
+
+    // 5) Copy each customer folder into the date folder (only matching subfolders)
     if (params.customersData) {
         for (const cust of params.customersData) {
             const link = cust.folderlinks || cust.folderlink;
@@ -275,8 +298,8 @@ async function processBranch(params) {
                 const match = /\/folders\/([a-zA-Z0-9_-]+)/.exec(link);
                 if (match) {
                     const srcId = match[1];
-                    console.log(`Copying folder ${cust.fullName} (${srcId})…`);
-                    await copyFolderRecursively(drive, srcId, dateFolderId);
+                    console.log(`Copying folder ${cust.fullName} (${srcId}) with filters:`, projectFolderNames);
+                    await copyFolderRecursively(drive, srcId, dateFolderId, projectFolderNames);
                 }
             }
         }
@@ -288,10 +311,10 @@ async function processBranch(params) {
     const sheetLink = `https://docs.google.com/spreadsheets/d/${newSheetId}/edit`;
     const folderLink = `https://drive.google.com/drive/folders/${dateFolderId}`;
 
-    // 5) Update AppSheet
+    // 6) Update AppSheet
     const apiResult = await updateAppSheet(branchId, sheetLink, folderLink);
 
-    // 6) Log the attempt
+    // 7) Log the attempt
     await appendLog(sheets, branchId, sheetLink, folderLink, apiResult.statusCode, apiResult.responseText, '');
 
     console.log('Done:', sheetLink, folderLink);

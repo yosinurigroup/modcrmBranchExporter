@@ -6,9 +6,9 @@ const payload = {
     branchName: 'ROMANO- Vardi & Danny',
     branchId: '6a5f7d0a',
     projectsData: [
-        { projects: '5CAD3A2C' },
-        { projects: 'C305B06F' },
-        { projects: 'C6E36746' }
+        { projects: '5CAD3A2C', projectFolders: 'Interior Paint' },
+        { projects: 'C305B06F', projectFolders: 'Exterior Siding' },
+        { projects: 'C6E36746', projectFolders: 'Bathroom Remodel' }
     ],
     customersData: [
         {
