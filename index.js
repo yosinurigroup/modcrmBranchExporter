@@ -91,30 +91,34 @@ async function getOrCreateFolder(drive, parentId, folderName) {
     return folder.data.id;
 }
 
-async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFolderNames = null) {
+async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFolderNames = null, depth = 0) {
     // Get source folder name
     const { data: srcMeta } = await drive.files.get({ fileId: sourceId, fields: 'name' });
+    const folderName = srcMeta.name;
 
-    // If we have a list of allowed folders and this folder is not in the list, skip it
-    if (allowedFolderNames && allowedFolderNames.length > 0) {
-        const folderName = srcMeta.name;
+    // Only filter subfolders (depth > 0), not the root customer folder (depth = 0)
+    if (depth > 0 && allowedFolderNames && allowedFolderNames.length > 0) {
         const isAllowed = allowedFolderNames.some(allowed =>
             folderName.toLowerCase().includes(allowed.toLowerCase()) ||
             allowed.toLowerCase().includes(folderName.toLowerCase())
         );
 
         if (!isAllowed) {
-            console.log(`Skipping folder: ${folderName} (not in allowed list)`);
+            console.log(`Skipping subfolder: ${folderName} (not in allowed list)`);
             return null;
         }
     }
 
     // Create new folder in target
     const { data: newFolder } = await drive.files.create({
-        resource: { name: srcMeta.name, mimeType: 'application/vnd.google-apps.folder', parents: [targetParentId] },
+        resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [targetParentId] },
         fields: 'id'
     });
     const newFolderId = newFolder.id;
+
+    if (depth === 0) {
+        console.log(`Copying customer folder: ${folderName}`);
+    }
 
     // List items in source folder
     let pageToken;
@@ -127,7 +131,8 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
         });
         for (const file of res.data.files) {
             if (file.mimeType === 'application/vnd.google-apps.folder') {
-                await copyFolderRecursively(drive, file.id, newFolderId, allowedFolderNames);
+                // Recursively copy subfolders with increased depth
+                await copyFolderRecursively(drive, file.id, newFolderId, allowedFolderNames, depth + 1);
             } else {
                 copyLimiter(() => copyFile(drive, file.id, file.name, newFolderId));
             }
