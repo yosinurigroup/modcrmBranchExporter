@@ -288,23 +288,68 @@ async function processBranch(params) {
         }
     });
 
-    // 4) Extract project folder names from projectsData
-    const projectFolderNames = params.projectsData && params.projectsData.length > 0
-        ? params.projectsData.map(p => p.projectFolders).filter(Boolean)
-        : null;
+    // 4) Extract project folder IDs from projectsData URLs
+    const projectFolderIds = [];
+    if (params.projectsData && params.projectsData.length > 0) {
+        params.projectsData.forEach(p => {
+            if (p.projectFolders) {
+                const match = /\/folders\/([a-zA-Z0-9_-]+)/.exec(p.projectFolders);
+                if (match) {
+                    projectFolderIds.push(match[1]);
+                }
+            }
+        });
+    }
 
-    console.log('Project folders to copy:', projectFolderNames);
+    console.log('Project folder IDs to copy:', projectFolderIds);
 
-    // 5) Copy each customer folder into the date folder (only matching subfolders)
+    // 5) Copy each customer folder
     if (params.customersData) {
         for (const cust of params.customersData) {
             const link = cust.folderlinks || cust.folderlink;
             if (link) {
                 const match = /\/folders\/([a-zA-Z0-9_-]+)/.exec(link);
                 if (match) {
-                    const srcId = match[1];
-                    console.log(`Copying folder ${cust.fullName} (${srcId}) with filters:`, projectFolderNames);
-                    await copyFolderRecursively(drive, srcId, dateFolderId, projectFolderNames);
+                    const custFolderId = match[1];
+                    console.log(`Processing customer: ${cust.fullName} (${custFolderId})`);
+
+                    // Create customer folder in date folder
+                    const { data: custMeta } = await drive.files.get({ fileId: custFolderId, fields: 'name' });
+                    const { data: newCustFolder } = await drive.files.create({
+                        resource: {
+                            name: custMeta.name,
+                            mimeType: 'application/vnd.google-apps.folder',
+                            parents: [dateFolderId]
+                        },
+                        fields: 'id'
+                    });
+                    console.log(`Created customer folder: ${custMeta.name}`);
+
+                    // Copy only the project folders (by ID) from customer folder
+                    if (projectFolderIds.length > 0) {
+                        for (const projFolderId of projectFolderIds) {
+                            try {
+                                // Check if this project folder exists in this customer's folder
+                                const { data: projMeta } = await drive.files.get({
+                                    fileId: projFolderId,
+                                    fields: 'name,parents'
+                                });
+
+                                // Check if this project folder is a child of the customer folder
+                                if (projMeta.parents && projMeta.parents.includes(custFolderId)) {
+                                    console.log(`  Copying project folder: ${projMeta.name}`);
+                                    await copyFolderRecursively(drive, projFolderId, newCustFolder.id, null, 0);
+                                }
+                            } catch (err) {
+                                // Project folder might not exist in this customer's folder, skip silently
+                                console.log(`  Project folder ${projFolderId} not found in ${cust.fullName}'s folder`);
+                            }
+                        }
+                    } else {
+                        // No project folders specified, copy everything
+                        console.log(`  No project folders specified, copying all subfolders`);
+                        await copyFolderRecursively(drive, custFolderId, newCustFolder.id, null, 1);
+                    }
                 }
             }
         }
