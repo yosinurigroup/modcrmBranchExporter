@@ -70,31 +70,7 @@ async function getNewToken(oAuth2Client) {
 
 // ====== DRIVE HELPERS ======
 // Limit concurrency of file copies (to avoid Drive API throttling)
-const copyLimiter = pLimit(3); // Reduced from 5 to 3 for better reliability
-
-// Helper to retry operations with exponential backoff
-async function retryOperation(operation, maxRetries = 5, delay = 1000) {
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            return await operation();
-        } catch (error) {
-            // Retry on rate limit (403, 429) or server errors (5xx)
-            const isRetryable =
-                error.code === 403 ||
-                error.code === 429 ||
-                (error.code >= 500 && error.code < 600) ||
-                (error.message && (error.message.includes('rate limit') || error.message.includes('backendError')));
-
-            if (!isRetryable || i === maxRetries - 1) {
-                throw error;
-            }
-
-            const waitTime = delay * Math.pow(2, i);
-            console.log(`Retry attempt ${i + 1}/${maxRetries} after ${waitTime}ms due to error: ${error.message}`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
-    }
-}
+const copyLimiter = pLimit(5);
 
 async function getOrCreateFolder(drive, parentId, folderName) {
     const res = await drive.files.list({
@@ -117,7 +93,7 @@ async function getOrCreateFolder(drive, parentId, folderName) {
 
 async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFolderNames = null, depth = 0) {
     // Get source folder name
-    const { data: srcMeta } = await retryOperation(() => drive.files.get({ fileId: sourceId, fields: 'name' }));
+    const { data: srcMeta } = await drive.files.get({ fileId: sourceId, fields: 'name' });
     const folderName = srcMeta.name;
 
     // Only filter subfolders (depth > 0), not the root customer folder (depth = 0)
@@ -134,10 +110,10 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
     }
 
     // Create new folder in target
-    const { data: newFolder } = await retryOperation(() => drive.files.create({
+    const { data: newFolder } = await drive.files.create({
         resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [targetParentId] },
         fields: 'id'
-    }));
+    });
     const newFolderId = newFolder.id;
 
     if (depth === 0) {
@@ -146,39 +122,32 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
 
     // List items in source folder
     let pageToken;
-    const copyPromises = [];
     do {
-        const res = await retryOperation(() => drive.files.list({
+        const res = await drive.files.list({
             q: `'${sourceId}' in parents and trashed=false`,
             fields: 'nextPageToken, files(id, name, mimeType)',
             pageSize: 1000,
             pageToken
-        }));
+        });
         for (const file of res.data.files) {
             if (file.mimeType === 'application/vnd.google-apps.folder') {
                 // Recursively copy subfolders with increased depth
-                // We await folders to ensure structure is created before we might need it (though parallel is also possible, sequential is safer for hierarchy)
                 await copyFolderRecursively(drive, file.id, newFolderId, allowedFolderNames, depth + 1);
             } else {
-                // Track the file copy promise
-                copyPromises.push(copyLimiter(() => copyFile(drive, file.id, file.name, newFolderId)));
+                copyLimiter(() => copyFile(drive, file.id, file.name, newFolderId));
             }
         }
         pageToken = res.data.nextPageToken;
     } while (pageToken);
-
-    // Wait for all file copies in this folder to complete
-    await Promise.all(copyPromises);
-
     return newFolderId;
 }
 
 async function copyFile(drive, fileId, name, parentId) {
-    await retryOperation(() => drive.files.copy({
+    await drive.files.copy({
         fileId,
         resource: { name, parents: [parentId] },
         fields: 'id'
-    }));
+    });
     console.log(`Copied file: ${name}`);
 }
 
@@ -319,28 +288,18 @@ async function processBranch(params) {
         }
     });
 
-    // 4) Map project folders by Customer ID
-    // Structure: { 'CID 123': ['folderId1', 'folderId2'], ... }
-    const customerProjectFolders = {};
-
+    // 4) Extract project folder IDs from projectsData URLs
+    const projectFolderIds = [];
     if (params.projectsData && params.projectsData.length > 0) {
         params.projectsData.forEach(p => {
-            if (p.projectFolders && p.customerId) {
+            if (p.projectFolders) {
                 const match = /\/folders\/([a-zA-Z0-9_-]+)/.exec(p.projectFolders);
                 if (match) {
-                    const folderId = match[1];
-                    const cid = p.customerId;
-
-                    if (!customerProjectFolders[cid]) {
-                        customerProjectFolders[cid] = [];
-                    }
-                    customerProjectFolders[cid].push(folderId);
+                    projectFolderIds.push(match[1]);
                 }
             }
         });
     }
-
-    console.log('Project folders mapped by Customer ID:', JSON.stringify(customerProjectFolders, null, 2));
 
     console.log('Project folder IDs to copy:', projectFolderIds);
 
@@ -354,44 +313,42 @@ async function processBranch(params) {
                     const custFolderId = match[1];
                     console.log(`Processing customer: ${cust.fullName} (${custFolderId})`);
 
-                    // Create customer folder in date folder with fullName from payload
+                    // Create customer folder in date folder
+                    const { data: custMeta } = await drive.files.get({ fileId: custFolderId, fields: 'name' });
                     const { data: newCustFolder } = await drive.files.create({
                         resource: {
-                            name: cust.fullName,  // Use fullName from payload instead of original folder name
+                            name: custMeta.name,
                             mimeType: 'application/vnd.google-apps.folder',
                             parents: [dateFolderId]
                         },
                         fields: 'id'
                     });
-                    console.log(`Created customer folder: ${cust.fullName}`);
+                    console.log(`Created customer folder: ${custMeta.name}`);
 
-                    // Copy only the project folders for THIS customer
-                    const myProjectFolders = customerProjectFolders[cust.customerId] || [];
-
-                    if (myProjectFolders.length > 0) {
-                        console.log(`  Found ${myProjectFolders.length} project folders for ${cust.fullName}`);
-                        for (const projFolderId of myProjectFolders) {
+                    // Copy only the project folders (by ID) from customer folder
+                    if (projectFolderIds.length > 0) {
+                        for (const projFolderId of projectFolderIds) {
                             try {
-                                // Get folder name to log it
-                                const { data: projMeta } = await retryOperation(() => drive.files.get({
+                                // Check if this project folder exists in this customer's folder
+                                const { data: projMeta } = await drive.files.get({
                                     fileId: projFolderId,
-                                    fields: 'name'
-                                }));
+                                    fields: 'name,parents'
+                                });
 
-                                console.log(`  Copying project folder: ${projMeta.name} (${projFolderId})`);
-                                // Copy the project folder directly into the new customer folder
-                                await copyFolderRecursively(drive, projFolderId, newCustFolder.id, null, 0);
-
+                                // Check if this project folder is a child of the customer folder
+                                if (projMeta.parents && projMeta.parents.includes(custFolderId)) {
+                                    console.log(`  Copying project folder: ${projMeta.name}`);
+                                    await copyFolderRecursively(drive, projFolderId, newCustFolder.id, null, 0);
+                                }
                             } catch (err) {
-                                console.error(`  Error copying project folder ${projFolderId}:`, err.message);
+                                // Project folder might not exist in this customer's folder, skip silently
+                                console.log(`  Project folder ${projFolderId} not found in ${cust.fullName}'s folder`);
                             }
                         }
                     } else {
-                        // Fallback: If no project folders are linked to this customer, 
-                        // check if we should copy everything or log a warning
-                        console.log(`  No specific project folders found for ${cust.fullName} (CID: ${cust.customerId})`);
-                        // Optional: Uncomment below if you want to copy ALL subfolders when no specific ones are found
-                        // await copyFolderRecursively(drive, custFolderId, newCustFolder.id, null, 1);
+                        // No project folders specified, copy everything
+                        console.log(`  No project folders specified, copying all subfolders`);
+                        await copyFolderRecursively(drive, custFolderId, newCustFolder.id, null, 1);
                     }
                 }
             }
