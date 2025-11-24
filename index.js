@@ -319,18 +319,28 @@ async function processBranch(params) {
         }
     });
 
-    // 4) Extract project folder IDs from projectsData URLs
-    const projectFolderIds = [];
+    // 4) Map project folders by Customer ID
+    // Structure: { 'CID 123': ['folderId1', 'folderId2'], ... }
+    const customerProjectFolders = {};
+
     if (params.projectsData && params.projectsData.length > 0) {
         params.projectsData.forEach(p => {
-            if (p.projectFolders) {
+            if (p.projectFolders && p.customerId) {
                 const match = /\/folders\/([a-zA-Z0-9_-]+)/.exec(p.projectFolders);
                 if (match) {
-                    projectFolderIds.push(match[1]);
+                    const folderId = match[1];
+                    const cid = p.customerId;
+
+                    if (!customerProjectFolders[cid]) {
+                        customerProjectFolders[cid] = [];
+                    }
+                    customerProjectFolders[cid].push(folderId);
                 }
             }
         });
     }
+
+    console.log('Project folders mapped by Customer ID:', JSON.stringify(customerProjectFolders, null, 2));
 
     console.log('Project folder IDs to copy:', projectFolderIds);
 
@@ -355,30 +365,33 @@ async function processBranch(params) {
                     });
                     console.log(`Created customer folder: ${cust.fullName}`);
 
-                    // Copy only the project folders (by ID) from customer folder
-                    if (projectFolderIds.length > 0) {
-                        for (const projFolderId of projectFolderIds) {
-                            try {
-                                // Check if this project folder exists in this customer's folder
-                                const { data: projMeta } = await drive.files.get({
-                                    fileId: projFolderId,
-                                    fields: 'name,parents'
-                                });
+                    // Copy only the project folders for THIS customer
+                    const myProjectFolders = customerProjectFolders[cust.customerId] || [];
 
-                                // Check if this project folder is a child of the customer folder
-                                if (projMeta.parents && projMeta.parents.includes(custFolderId)) {
-                                    console.log(`  Copying project folder: ${projMeta.name}`);
-                                    await copyFolderRecursively(drive, projFolderId, newCustFolder.id, null, 0);
-                                }
+                    if (myProjectFolders.length > 0) {
+                        console.log(`  Found ${myProjectFolders.length} project folders for ${cust.fullName}`);
+                        for (const projFolderId of myProjectFolders) {
+                            try {
+                                // Get folder name to log it
+                                const { data: projMeta } = await retryOperation(() => drive.files.get({
+                                    fileId: projFolderId,
+                                    fields: 'name'
+                                }));
+
+                                console.log(`  Copying project folder: ${projMeta.name} (${projFolderId})`);
+                                // Copy the project folder directly into the new customer folder
+                                await copyFolderRecursively(drive, projFolderId, newCustFolder.id, null, 0);
+
                             } catch (err) {
-                                // Project folder might not exist in this customer's folder, skip silently
-                                console.log(`  Project folder ${projFolderId} not found in ${cust.fullName}'s folder`);
+                                console.error(`  Error copying project folder ${projFolderId}:`, err.message);
                             }
                         }
                     } else {
-                        // No project folders specified, copy everything
-                        console.log(`  No project folders specified, copying all subfolders`);
-                        await copyFolderRecursively(drive, custFolderId, newCustFolder.id, null, 1);
+                        // Fallback: If no project folders are linked to this customer, 
+                        // check if we should copy everything or log a warning
+                        console.log(`  No specific project folders found for ${cust.fullName} (CID: ${cust.customerId})`);
+                        // Optional: Uncomment below if you want to copy ALL subfolders when no specific ones are found
+                        // await copyFolderRecursively(drive, custFolderId, newCustFolder.id, null, 1);
                     }
                 }
             }

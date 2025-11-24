@@ -6,9 +6,9 @@ const payload = {
     branchName: 'ROMANO- Vardi & Danny',
     branchId: '6a5f7d0a',
     projectsData: [
-        { projects: '5CAD3A2C', projectFolders: 'Interior Paint' },
-        { projects: 'C305B06F', projectFolders: 'Exterior Siding' },
-        { projects: 'C6E36746', projectFolders: 'Bathroom Remodel' }
+        { projects: '5CAD3A2C', customerId: 'CID B6C795C2', projectFolders: 'https://drive.google.com/drive/folders/1SLlO8Exj7vLo6Obpg9qUzzNEG01OcCJ8' },
+        { projects: 'C305B06F', customerId: 'CID B6C795C2', projectFolders: 'https://drive.google.com/drive/folders/1JUhWCcK4ensDcRZX3ewK00dgqtGnaE0H' },
+        { projects: 'C6E36746', customerId: 'CID 014CE6CB', projectFolders: 'https://drive.google.com/drive/folders/11re3xXq_LSfHp03N9R8tny4oJi5Y7qmZ' }
     ],
     customersData: [
         {
