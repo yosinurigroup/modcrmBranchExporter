@@ -122,6 +122,7 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
 
     // List items in source folder
     let pageToken;
+    const copyPromises = [];
     do {
         const res = await drive.files.list({
             q: `'${sourceId}' in parents and trashed=false`,
@@ -132,13 +133,19 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
         for (const file of res.data.files) {
             if (file.mimeType === 'application/vnd.google-apps.folder') {
                 // Recursively copy subfolders with increased depth
+                // We await folders to ensure structure is created before we might need it (though parallel is also possible, sequential is safer for hierarchy)
                 await copyFolderRecursively(drive, file.id, newFolderId, allowedFolderNames, depth + 1);
             } else {
-                copyLimiter(() => copyFile(drive, file.id, file.name, newFolderId));
+                // Track the file copy promise
+                copyPromises.push(copyLimiter(() => copyFile(drive, file.id, file.name, newFolderId)));
             }
         }
         pageToken = res.data.nextPageToken;
     } while (pageToken);
+
+    // Wait for all file copies in this folder to complete
+    await Promise.all(copyPromises);
+
     return newFolderId;
 }
 
