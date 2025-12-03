@@ -1,4 +1,5 @@
 // server.js - Webhook server for AppSheet integration
+require('dotenv').config();
 const express = require('express');
 const { processBranch } = require('./index');
 

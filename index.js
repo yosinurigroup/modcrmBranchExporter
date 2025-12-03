@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const fetch = require('node-fetch');
 const pLimit = require('p-limit');
 const { google } = require('googleapis');
+const { Resend } = require('resend');
 
 const CREDENTIALS_PATH = 'credentials.json';
 const TOKEN_PATH = 'token.json';
@@ -12,6 +13,11 @@ const SOURCE_SHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s'; // conta
 const LOG_SPREADSHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s';
 const APP_ID = 'fea7f1b0-d312-4ae4-a923-aeea438d9ea0';
 const ACCESS_KEY = 'V2-ISEP6-P7hiF-OU44l-dWLZH-YYHPd-3fFox-IXJc0-wrnkJ';
+
+// Email configuration (Resend)
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const EMAIL_FROM = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 // ====== HELPER: AUTHORIZATION ======
 async function loadCredentials() {
@@ -72,7 +78,61 @@ async function getNewToken(oAuth2Client) {
 // Limit concurrency of file copies (to avoid Drive API throttling)
 const copyLimiter = pLimit(5);
 
-async function getOrCreateFolder(drive, parentId, folderName) {
+// Helper function to add delay (for rate limiting)
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Helper function to retry API calls with exponential backoff
+async function retryWithBackoff(fn, maxRetries = 3, baseDelay = 1000) {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await fn();
+        } catch (error) {
+            lastError = error;
+            const isRetryable =
+                error.code === 500 ||
+                error.code === 503 ||
+                error.message?.includes('rate limit') ||
+                error.message?.includes('quota') ||
+                error.message?.includes('backend unavailable') ||
+                error.message?.includes('Authentication backend');
+
+            if (isRetryable && i < maxRetries - 1) {
+                const delay = baseDelay * Math.pow(2, i); // Exponential backoff
+                console.log(`  Retrying after ${delay}ms due to: ${error.message}`);
+                await sleep(delay);
+            } else if (!isRetryable) {
+                throw error; // Don't retry non-retryable errors
+            }
+        }
+    }
+    throw lastError;
+}
+
+// Delete all existing folders/files with the given name in the parent
+async function deleteExistingFolder(drive, parentId, folderName) {
+    const res = await drive.files.list({
+        q: `'${parentId}' in parents and name='${folderName}' and trashed=false`,
+        fields: 'files(id, name)'
+    });
+
+    for (const file of res.data.files) {
+        console.log(`  Deleting existing: ${file.name} (${file.id})`);
+        await retryWithBackoff(async () => {
+            await drive.files.delete({ fileId: file.id });
+        });
+    }
+}
+
+async function getOrCreateFolder(drive, parentId, folderName, deleteExisting = false) {
+    // Delete existing folder if requested (for overwrite)
+    if (deleteExisting) {
+        await deleteExistingFolder(drive, parentId, folderName);
+    }
+
+    // Check if folder exists
     const res = await drive.files.list({
         q: `'${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and name='${folderName}' and trashed=false`,
         fields: 'files(id, name)',
@@ -80,6 +140,7 @@ async function getOrCreateFolder(drive, parentId, folderName) {
     });
     if (res.data.files.length > 0) return res.data.files[0].id;
 
+    // Create new folder
     const folder = await drive.files.create({
         resource: {
             name: folderName,
@@ -150,10 +211,12 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
 }
 
 async function copyFile(drive, fileId, name, parentId) {
-    await drive.files.copy({
-        fileId,
-        resource: { name, parents: [parentId] },
-        fields: 'id'
+    await retryWithBackoff(async () => {
+        await drive.files.copy({
+            fileId,
+            resource: { name, parents: [parentId] },
+            fields: 'id'
+        });
     });
     console.log(`Copied file: ${name}`);
 }
@@ -238,13 +301,12 @@ async function filterData(drive, sheets, customersData, branchName) {
 }
 
 // ====== APPSHEET UPDATE ======
-async function updateAppSheet(branchId, sheetLink, folderLink) {
+async function updateAppSheet(branchId, updates) {
     const payload = {
         Action: 'Edit',
         Rows: [{
             dropid: branchId,
-            BranchSheet: sheetLink,
-            BranchData: folderLink
+            ...updates
         }]
     };
     const url = `https://api.appsheet.com/api/v2/apps/${APP_ID}/tables/Dropdowns/Action?applicationAccessKey=${ACCESS_KEY}`;
@@ -257,6 +319,61 @@ async function updateAppSheet(branchId, sheetLink, folderLink) {
     return { statusCode: resp.status, responseText: text };
 }
 
+// ====== EMAIL NOTIFICATION ======
+async function sendCompletionEmail(branchName, stats, sheetLink, folderLink, errors, recipientEmail) {
+    // Skip if Resend not configured
+    if (!resend || !recipientEmail) {
+        console.log('Email not configured or no recipient specified, skipping notification');
+        return;
+    }
+
+    const errorSection = errors.length > 0 ? `
+    <h3 style="color: #d9534f;">⚠️ Errors Encountered (${errors.length})</h3>
+    <ul>
+    ${errors.map(e => `<li><strong>${e.customer || 'Unknown'}</strong>: ${e.error}</li>`).join('')}
+    </ul>
+    ` : '';
+
+    try {
+        const { data, error } = await resend.emails.send({
+            from: EMAIL_FROM,
+            to: recipientEmail,
+            subject: `✓ ModCRM Export Complete: ${branchName}`,
+            html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #5cb85c;">✓ Branch Export Completed</h2>
+                <p>The export for <strong>${branchName}</strong> has been completed.</p>
+                
+                <h3>📊 Summary</h3>
+                <ul>
+                    <li>✓ Successfully processed: <strong>${stats.successCount}</strong> customers</li>
+                    <li>✗ Failed: <strong>${stats.errorCount}</strong> customers</li>
+                </ul>
+                
+                ${errorSection}
+                
+                <h3>📁 Links</h3>
+                <p>
+                    <a href="${sheetLink}" style="display: inline-block; padding: 10px 20px; background-color: #5cb85c; color: white; text-decoration: none; border-radius: 5px; margin-right: 10px;">View Spreadsheet</a>
+                    <a href="${folderLink}" style="display: inline-block; padding: 10px 20px; background-color: #0275d8; color: white; text-decoration: none; border-radius: 5px;">View Folder</a>
+                </p>
+                
+                <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
+                <p style="color: #666; font-size: 12px;">Generated by ModCRM Branch Exporter at ${new Date().toLocaleString()}</p>
+            </div>
+            `
+        });
+
+        if (error) {
+            console.error('Failed to send email:', error.message);
+        } else {
+            console.log(`📧 Completion email sent to ${recipientEmail}`);
+        }
+    } catch (error) {
+        console.error('Failed to send email:', error.message);
+    }
+}
+
 // ====== MAIN FUNCTION ======
 async function processBranch(params) {
     const auth = await authorize();
@@ -265,24 +382,40 @@ async function processBranch(params) {
 
     const branchName = params.branchName;
     const branchId = params.branchId;
-    const dateStr = new Date().toISOString().slice(0, 10);
+    const userEmail = params.user; // Get user email from payload
 
-    // 1) Create branch and date folders
-    const branchFolderId = await getOrCreateFolder(drive, PARENT_FOLDER_ID, branchName);
-    const dateFolderId = await getOrCreateFolder(drive, branchFolderId, dateStr);
-    console.log(`Using folders: ${branchFolderId} -> ${dateFolderId}`);
+    console.log(`Starting export for branch: ${branchName}`);
+    if (userEmail) {
+        console.log(`Notification will be sent to: ${userEmail}`);
+    }
+
+    // 1) Create/get branch folder (delete existing content for overwrite)
+    const branchFolderId = await getOrCreateFolder(drive, PARENT_FOLDER_ID, branchName, true);
+    console.log(`Using branch folder: ${branchFolderId}`);
 
     // 2) Create new spreadsheet
     const newSheetId = await createSpreadsheet(sheets, `${branchName} - Projects`);
-    // Move the new sheet into the date folder
+    // Move the new sheet into the branch folder
     await drive.files.update({
         fileId: newSheetId,
-        addParents: dateFolderId,
+        addParents: branchFolderId,
         removeParents: 'root',
         fields: 'id'
     });
 
-    // 3) Filter and write data
+    // PREPARE LINKS
+    const sheetLink = `https://docs.google.com/spreadsheets/d/${newSheetId}/edit`;
+    const folderLink = `https://drive.google.com/drive/folders/${branchFolderId}`;
+
+    // 3) IMMEDIATE UPDATE TO APPSHEET (Links)
+    console.log('Sending links to AppSheet...');
+    await updateAppSheet(branchId, {
+        BranchSheet: sheetLink,
+        BranchData: folderLink,
+        ScriptSummary: 'Processing started...'
+    });
+
+    // 4) Filter and write data
     const { pHeader, filteredProjects, cHeader, filteredCustomers } = await filterData(drive, sheets, params.customersData, branchName);
     await writeSheet(sheets, newSheetId, 'Projects', pHeader, filteredProjects);
     await writeSheet(sheets, newSheetId, 'Customers', cHeader, filteredCustomers);
@@ -316,51 +449,82 @@ async function processBranch(params) {
     console.log('Project folders mapped by customer:', JSON.stringify(projectFoldersByCustomer, null, 2));
 
     // 5) Copy each customer folder
+    let successCount = 0;
+    let errorCount = 0;
+    const errors = [];
+
     if (params.customersData) {
-        for (const cust of params.customersData) {
+        for (let i = 0; i < params.customersData.length; i++) {
+            const cust = params.customersData[i];
             const link = cust.folderlinks || cust.folderlink;
+
             if (link) {
                 const match = /\/folders\/([a-zA-Z0-9_-]+)/.exec(link);
                 if (match) {
                     const custFolderId = match[1];
-                    console.log(`Processing customer: ${cust.fullName} (${custFolderId})`);
+                    console.log(`[${i + 1}/${params.customersData.length}] Processing customer: ${cust.fullName} (${custFolderId})`);
 
-                    // Create customer folder in date folder with fullName from payload
-                    const { data: newCustFolder } = await drive.files.create({
-                        resource: {
-                            name: cust.fullName,  // Use fullName from payload instead of original folder name
-                            mimeType: 'application/vnd.google-apps.folder',
-                            parents: [dateFolderId]
-                        },
-                        fields: 'id'
-                    });
-                    console.log(`Created customer folder: ${cust.fullName}`);
+                    try {
+                        // Delete existing customer folder if it exists (overwrite)
+                        await deleteExistingFolder(drive, branchFolderId, cust.fullName);
 
-                    // Get project folders specifically for this customer
-                    const customerProjectFolders = projectFoldersByCustomer[cust.customerId] || [];
+                        // Create customer folder with retry logic
+                        const newCustFolder = await retryWithBackoff(async () => {
+                            const result = await drive.files.create({
+                                resource: {
+                                    name: cust.fullName,
+                                    mimeType: 'application/vnd.google-apps.folder',
+                                    parents: [branchFolderId]
+                                },
+                                fields: 'id'
+                            });
+                            return result.data;
+                        });
+                        console.log(`  ✓ Created customer folder: ${cust.fullName}`);
 
-                    // Copy only the project folders (by ID) for this customer
-                    if (customerProjectFolders.length > 0) {
-                        for (const projFolderId of customerProjectFolders) {
-                            try {
-                                // Get folder metadata to get the name
-                                const { data: projMeta } = await drive.files.get({
-                                    fileId: projFolderId,
-                                    fields: 'name'
-                                });
+                        // Get project folders specifically for this customer
+                        const customerProjectFolders = projectFoldersByCustomer[cust.customerId] || [];
 
-                                console.log(`  Copying project folder: ${projMeta.name} (${projFolderId})`);
-                                // Copy the folder directly, no parent check needed as payload confirms the link
-                                await copyFolderRecursively(drive, projFolderId, newCustFolder.id, null, 0);
+                        // Copy only the project folders (by ID) for this customer
+                        if (customerProjectFolders.length > 0) {
+                            for (const projFolderId of customerProjectFolders) {
+                                try {
+                                    // Get folder metadata with retry
+                                    const projMeta = await retryWithBackoff(async () => {
+                                        const result = await drive.files.get({
+                                            fileId: projFolderId,
+                                            fields: 'name'
+                                        });
+                                        return result.data;
+                                    });
 
-                            } catch (err) {
-                                console.log(`  Error copying project folder ${projFolderId}: ${err.message}`);
+                                    console.log(`  Copying project folder: ${projMeta.name} (${projFolderId})`);
+                                    await copyFolderRecursively(drive, projFolderId, newCustFolder.id, null, 0);
+
+                                } catch (err) {
+                                    console.log(`  ✗ Error copying project folder ${projFolderId}: ${err.message}`);
+                                    errors.push({ customer: cust.fullName, projectFolder: projFolderId, error: err.message });
+                                }
                             }
+                        } else {
+                            // No project folders specified for this customer, copy everything from their root folder
+                            console.log(`  No specific project folders found for ${cust.customerId}, copying all subfolders`);
+                            await copyFolderRecursively(drive, custFolderId, newCustFolder.id, null, 1);
                         }
-                    } else {
-                        // No project folders specified for this customer, copy everything from their root folder
-                        console.log(`  No specific project folders found for ${cust.customerId}, copying all subfolders`);
-                        await copyFolderRecursively(drive, custFolderId, newCustFolder.id, null, 1);
+
+                        successCount++;
+                        console.log(`  ✓ Completed customer: ${cust.fullName}\n`);
+
+                    } catch (err) {
+                        errorCount++;
+                        const errorMsg = `Failed to process customer ${cust.fullName}: ${err.message}`;
+                        console.error(`  ✗ ${errorMsg}\n`);
+                        errors.push({ customer: cust.fullName, error: err.message });
+                    }
+
+                    // Add delay between customers to avoid rate limiting (except for last customer)
+                    if (i < params.customersData.length - 1) {
+                        await sleep(500); // 500ms delay between customers
                     }
                 }
             }
@@ -370,16 +534,44 @@ async function processBranch(params) {
     // Wait for any outstanding file copies to finish
     await copyLimiter(() => Promise.resolve());
 
-    const sheetLink = `https://docs.google.com/spreadsheets/d/${newSheetId}/edit`;
-    const folderLink = `https://drive.google.com/drive/folders/${dateFolderId}`;
+    // Log summary
+    console.log('\n========== PROCESSING SUMMARY ==========');
+    console.log(`✓ Successfully processed: ${successCount} customers`);
+    console.log(`✗ Failed: ${errorCount} customers`);
+    if (errors.length > 0) {
+        console.log('\nErrors encountered:');
+        errors.forEach((err, idx) => {
+            console.log(`  ${idx + 1}. ${err.customer}: ${err.error}`);
+        });
+    }
+    console.log('=========================================\n');
 
-    // 6) Update AppSheet
-    const apiResult = await updateAppSheet(branchId, sheetLink, folderLink);
+    // Generate Summary String
+    const summaryText = `Completed: ${successCount} success, ${errorCount} failed. ${errors.length > 0 ? 'Errors: ' + errors.map(e => e.customer).join(', ') : ''}`;
 
-    // 7) Log the attempt
-    await appendLog(sheets, branchId, sheetLink, folderLink, apiResult.statusCode, apiResult.responseText, '');
+    // 6) Final Update to AppSheet (Summary)
+    console.log('Sending summary to AppSheet...');
+    const apiResult = await updateAppSheet(branchId, {
+        ScriptSummary: summaryText
+    });
 
-    console.log('Done:', sheetLink, folderLink);
+    // 7) Log the attempt (include error summary)
+    const errorSummary = errors.length > 0 ? `Errors: ${errors.length}` : '';
+    await appendLog(sheets, branchId, sheetLink, folderLink, apiResult.statusCode, apiResult.responseText, errorSummary);
+
+    console.log('✓ Done!');
+    console.log('  Spreadsheet:', sheetLink);
+    console.log('  Folder:', folderLink);
+
+    // 8) Send completion email
+    await sendCompletionEmail(branchName, { successCount, errorCount }, sheetLink, folderLink, errors, userEmail);
+
+    return {
+        success: true,
+        sheetLink,
+        folderLink,
+        stats: { successCount, errorCount, errors }
+    };
 }
 
 // Example invocation:
