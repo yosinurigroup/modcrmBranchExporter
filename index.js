@@ -304,6 +304,10 @@ async function filterData(drive, sheets, customersData, branchName) {
 async function updateAppSheet(branchId, updates) {
     const payload = {
         Action: 'Edit',
+        Properties: {
+            Locale: 'en-US',
+            Timezone: 'UTC'
+        },
         Rows: [{
             dropid: branchId,
             ...updates
