@@ -153,6 +153,25 @@ async function getOrCreateFolder(drive, parentId, folderName, deleteExisting = f
     return folder.data.id;
 }
 
+// Helper to get map of existing files in a folder: name -> id
+async function getExistingFilesMap(drive, folderId) {
+    const map = new Map();
+    let pageToken;
+    do {
+        const res = await drive.files.list({
+            q: `'${folderId}' in parents and trashed=false`,
+            fields: 'nextPageToken, files(id, name, mimeType)',
+            pageSize: 1000,
+            pageToken
+        });
+        for (const file of res.data.files) {
+            map.set(file.name, { id: file.id, mimeType: file.mimeType });
+        }
+        pageToken = res.data.nextPageToken;
+    } while (pageToken);
+    return map;
+}
+
 async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFolderNames = null, depth = 0) {
     // Get source folder name
     const { data: srcMeta } = await drive.files.get({ fileId: sourceId, fields: 'name' });
@@ -171,16 +190,27 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
         }
     }
 
-    // Create new folder in target
-    const { data: newFolder } = await drive.files.create({
-        resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [targetParentId] },
-        fields: 'id'
-    });
-    const newFolderId = newFolder.id;
+    // Check if folder already exists in target
+    let newFolderId;
+    const existingItemsInTarget = await getExistingFilesMap(drive, targetParentId);
+    const existingFolder = existingItemsInTarget.get(folderName);
 
-    if (depth === 0) {
-        console.log(`Copying customer folder: ${folderName}`);
+    if (existingFolder && existingFolder.mimeType === 'application/vnd.google-apps.folder') {
+        // Use existing folder
+        newFolderId = existingFolder.id;
+        if (depth === 0) console.log(`Using existing customer folder: ${folderName}`);
+    } else {
+        // Create new folder in target
+        const { data: newFolder } = await drive.files.create({
+            resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [targetParentId] },
+            fields: 'id'
+        });
+        newFolderId = newFolder.id;
+        if (depth === 0) console.log(`Created customer folder: ${folderName}`);
     }
+
+    // Get map of what's already inside the destination folder (to skip duplicates)
+    const itemsInNewFolder = await getExistingFilesMap(drive, newFolderId);
 
     // List items in source folder
     let pageToken;
@@ -194,12 +224,16 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
         });
         for (const file of res.data.files) {
             if (file.mimeType === 'application/vnd.google-apps.folder') {
-                // Recursively copy subfolders with increased depth
-                // We await folders to ensure structure is created before we might need it (though parallel is also possible, sequential is safer for hierarchy)
+                // Recursively copy subfolders
                 await copyFolderRecursively(drive, file.id, newFolderId, allowedFolderNames, depth + 1);
             } else {
-                // Track the file copy promise
-                copyPromises.push(copyLimiter(() => copyFile(drive, file.id, file.name, newFolderId)));
+                // Check if file already exists
+                if (itemsInNewFolder.has(file.name)) {
+                    console.log(`Skipping existing file: ${file.name}`);
+                } else {
+                    // Track the file copy promise
+                    copyPromises.push(copyLimiter(() => copyFile(drive, file.id, file.name, newFolderId)));
+                }
             }
         }
         pageToken = res.data.nextPageToken;
@@ -400,8 +434,8 @@ async function processBranch(params) {
     console.log(`Starting export for branch: ${branchName} at ${startTime.toLocaleTimeString()}`);
     console.log(`Notification will be sent to: ${userEmail}`);
 
-    // 1) Create/get branch folder (delete existing content for overwrite)
-    const branchFolderId = await getOrCreateFolder(drive, PARENT_FOLDER_ID, branchName, true);
+    // 1) Create/get branch folder (INCREMENTAL SYNC: do NOT delete existing)
+    const branchFolderId = await getOrCreateFolder(drive, PARENT_FOLDER_ID, branchName, false);
     console.log(`Using branch folder: ${branchFolderId}`);
 
     // 2) Create new spreadsheet
@@ -472,26 +506,22 @@ async function processBranch(params) {
             if (link) {
                 const match = /\/folders\/([a-zA-Z0-9_-]+)/.exec(link);
                 if (match) {
-                    const custFolderId = match[1];
-                    console.log(`[${i + 1}/${params.customersData.length}] Processing customer: ${cust.fullName} (${custFolderId})`);
+                    const sourceCustFolderId = match[1]; // Renamed to avoid conflict with new custFolderId
+                    console.log(`[${i + 1}/${params.customersData.length}] Processing customer: ${cust.fullName} (Source ID: ${sourceCustFolderId})`);
 
                     try {
-                        // Delete existing customer folder if it exists (overwrite)
-                        await deleteExistingFolder(drive, branchFolderId, cust.fullName);
+                        // INCREMENTAL SYNC: Do NOT delete existing customer folder
+                        // await deleteExistingFolder(drive, branchFolderId, cust.fullName);
 
-                        // Create customer folder with retry logic
-                        const newCustFolder = await retryWithBackoff(async () => {
-                            const result = await drive.files.create({
-                                resource: {
-                                    name: cust.fullName,
-                                    mimeType: 'application/vnd.google-apps.folder',
-                                    parents: [branchFolderId]
-                                },
-                                fields: 'id'
-                            });
-                            return result.data;
-                        });
-                        console.log(`  ✓ Created customer folder: ${cust.fullName}`);
+                        // Copy/Sync customer folder
+                        // We use copyFolderRecursively which now handles "get or create" logic internally
+                        // But wait, copyFolderRecursively takes a SOURCE ID.
+                        // Here we are creating the ROOT customer folder which doesn't have a single source ID
+                        // because we are copying multiple project folders INTO it.
+
+                        // So first, ensure customer folder exists
+                        const custFolderId = await getOrCreateFolder(drive, branchFolderId, cust.fullName, false);
+                        console.log(`  ✓ Customer folder ready: ${cust.fullName} (Target ID: ${custFolderId})`);
 
                         // Get project folders specifically for this customer
                         const customerProjectFolders = projectFoldersByCustomer[cust.customerId] || [];
@@ -509,8 +539,8 @@ async function processBranch(params) {
                                         return result.data;
                                     });
 
-                                    console.log(`  Copying project folder: ${projMeta.name} (${projFolderId})`);
-                                    await copyFolderRecursively(drive, projFolderId, newCustFolder.id, null, 0);
+                                    console.log(`  Syncing project folder: ${projMeta.name} (Source ID: ${projFolderId})`);
+                                    await copyFolderRecursively(drive, projFolderId, custFolderId);
 
                                 } catch (err) {
                                     console.log(`  ✗ Error copying project folder ${projFolderId}: ${err.message}`);
