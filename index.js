@@ -172,7 +172,7 @@ async function getExistingFilesMap(drive, folderId) {
     return map;
 }
 
-async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFolderNames = null, depth = 0) {
+async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFolderNames = null, depth = 0, stats = { newFiles: 0, skippedFiles: 0, newFolders: 0, skippedFolders: 0 }) {
     // Get source folder name
     const { data: srcMeta } = await drive.files.get({ fileId: sourceId, fields: 'name' });
     const folderName = srcMeta.name;
@@ -198,6 +198,7 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
     if (existingFolder && existingFolder.mimeType === 'application/vnd.google-apps.folder') {
         // Use existing folder
         newFolderId = existingFolder.id;
+        stats.skippedFolders++;
         if (depth === 0) console.log(`Using existing customer folder: ${folderName}`);
     } else {
         // Create new folder in target
@@ -206,6 +207,7 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
             fields: 'id'
         });
         newFolderId = newFolder.id;
+        stats.newFolders++;
         if (depth === 0) console.log(`Created customer folder: ${folderName}`);
     }
 
@@ -225,13 +227,15 @@ async function copyFolderRecursively(drive, sourceId, targetParentId, allowedFol
         for (const file of res.data.files) {
             if (file.mimeType === 'application/vnd.google-apps.folder') {
                 // Recursively copy subfolders
-                await copyFolderRecursively(drive, file.id, newFolderId, allowedFolderNames, depth + 1);
+                await copyFolderRecursively(drive, file.id, newFolderId, allowedFolderNames, depth + 1, stats);
             } else {
                 // Check if file already exists
                 if (itemsInNewFolder.has(file.name)) {
                     console.log(`Skipping existing file: ${file.name}`);
+                    stats.skippedFiles++;
                 } else {
                     // Track the file copy promise
+                    stats.newFiles++;
                     copyPromises.push(copyLimiter(() => copyFile(drive, file.id, file.name, newFolderId)));
                 }
             }
@@ -390,6 +394,13 @@ async function sendCompletionEmail(branchName, stats, sheetLink, folderLink, err
                 <li>⏱️ Duration: <strong>${stats.duration}</strong></li>
                 <li>🕒 Completed: <strong>${stats.completionTime}</strong></li>
             </ul>
+            
+            <h3>📂 File Stats</h3>
+            <ul>
+                <li>📄 New Files Added: <strong>${stats.newFiles}</strong></li>
+                <li>⏩ Existing Files Skipped: <strong>${stats.skippedFiles}</strong></li>
+                <li>📁 New Folders Created: <strong>${stats.newFolders}</strong></li>
+            </ul>
                 
                 ${errorSection}
                 
@@ -497,6 +508,7 @@ async function processBranch(params) {
     let successCount = 0;
     let errorCount = 0;
     const errors = [];
+    const syncStats = { newFiles: 0, skippedFiles: 0, newFolders: 0, skippedFolders: 0 };
 
     if (params.customersData) {
         for (let i = 0; i < params.customersData.length; i++) {
@@ -540,7 +552,7 @@ async function processBranch(params) {
                                     });
 
                                     console.log(`  Syncing project folder: ${projMeta.name} (Source ID: ${projFolderId})`);
-                                    await copyFolderRecursively(drive, projFolderId, custFolderId);
+                                    await copyFolderRecursively(drive, projFolderId, custFolderId, null, 0, syncStats);
 
                                 } catch (err) {
                                     console.log(`  ✗ Error copying project folder ${projFolderId}: ${err.message}`);
@@ -596,7 +608,7 @@ async function processBranch(params) {
     const completionTimeStr = endTime.toLocaleString();
 
     // Generate Summary String
-    const summaryText = `Completed: ${successCount} success, ${errorCount} failed. Duration: ${durationStr}. ${errors.length > 0 ? 'Errors: ' + errors.map(e => e.customer).join(', ') : ''}`;
+    const summaryText = `Completed: ${successCount} success, ${errorCount} failed. Added ${syncStats.newFiles} files, skipped ${syncStats.skippedFiles}. Duration: ${durationStr}. ${errors.length > 0 ? 'Errors: ' + errors.map(e => e.customer).join(', ') : ''}`;
 
     // 6) Final Update to AppSheet (Summary)
     console.log('Sending summary to AppSheet...');
@@ -612,6 +624,7 @@ async function processBranch(params) {
     console.log('  Spreadsheet:', sheetLink);
     console.log('  Folder:', folderLink);
     console.log(`  Duration: ${durationStr}`);
+    console.log(`  Stats: ${syncStats.newFiles} new files, ${syncStats.skippedFiles} skipped`);
 
     // 8) Send completion email
     await sendCompletionEmail(
@@ -620,7 +633,10 @@ async function processBranch(params) {
             successCount,
             errorCount,
             duration: durationStr,
-            completionTime: completionTimeStr
+            completionTime: completionTimeStr,
+            newFiles: syncStats.newFiles,
+            skippedFiles: syncStats.skippedFiles,
+            newFolders: syncStats.newFolders
         },
         sheetLink,
         folderLink,
