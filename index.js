@@ -16,6 +16,7 @@ const ACCESS_KEY = 'V2-ISEP6-P7hiF-OU44l-dWLZH-YYHPd-3fFox-IXJc0-wrnkJ';
 
 // Email configuration (Resend)
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+console.log('DEBUG: Resend API Key loaded:', !!RESEND_API_KEY); // Check if key exists
 const EMAIL_FROM = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
@@ -349,10 +350,12 @@ async function sendCompletionEmail(branchName, stats, sheetLink, folderLink, err
                 <p>The export for <strong>${branchName}</strong> has been completed.</p>
                 
                 <h3>📊 Summary</h3>
-                <ul>
-                    <li>✓ Successfully processed: <strong>${stats.successCount}</strong> customers</li>
-                    <li>✗ Failed: <strong>${stats.errorCount}</strong> customers</li>
-                </ul>
+            <ul>
+                <li>✓ Successfully processed: <strong>${stats.successCount}</strong> customers</li>
+                <li>✗ Failed: <strong>${stats.errorCount}</strong> customers</li>
+                <li>⏱️ Duration: <strong>${stats.duration}</strong></li>
+                <li>🕒 Completed: <strong>${stats.completionTime}</strong></li>
+            </ul>
                 
                 ${errorSection}
                 
@@ -386,12 +389,12 @@ async function processBranch(params) {
 
     const branchName = params.branchName;
     const branchId = params.branchId;
-    const userEmail = params.user; // Get user email from payload
+    // Use payload user OR hardcoded admin email
+    const userEmail = params.user || 'admin@y2kgrouphosting.com';
 
-    console.log(`Starting export for branch: ${branchName}`);
-    if (userEmail) {
-        console.log(`Notification will be sent to: ${userEmail}`);
-    }
+    const startTime = new Date();
+    console.log(`Starting export for branch: ${branchName} at ${startTime.toLocaleTimeString()}`);
+    console.log(`Notification will be sent to: ${userEmail}`);
 
     // 1) Create/get branch folder (delete existing content for overwrite)
     const branchFolderId = await getOrCreateFolder(drive, PARENT_FOLDER_ID, branchName, true);
@@ -550,8 +553,16 @@ async function processBranch(params) {
     }
     console.log('=========================================\n');
 
+    // Calculate duration
+    const endTime = new Date();
+    const durationMs = endTime - startTime;
+    const durationMin = Math.floor(durationMs / 60000);
+    const durationSec = ((durationMs % 60000) / 1000).toFixed(0);
+    const durationStr = `${durationMin}m ${durationSec}s`;
+    const completionTimeStr = endTime.toLocaleString();
+
     // Generate Summary String
-    const summaryText = `Completed: ${successCount} success, ${errorCount} failed. ${errors.length > 0 ? 'Errors: ' + errors.map(e => e.customer).join(', ') : ''}`;
+    const summaryText = `Completed: ${successCount} success, ${errorCount} failed. Duration: ${durationStr}. ${errors.length > 0 ? 'Errors: ' + errors.map(e => e.customer).join(', ') : ''}`;
 
     // 6) Final Update to AppSheet (Summary)
     console.log('Sending summary to AppSheet...');
@@ -566,9 +577,22 @@ async function processBranch(params) {
     console.log('✓ Done!');
     console.log('  Spreadsheet:', sheetLink);
     console.log('  Folder:', folderLink);
+    console.log(`  Duration: ${durationStr}`);
 
     // 8) Send completion email
-    await sendCompletionEmail(branchName, { successCount, errorCount }, sheetLink, folderLink, errors, userEmail);
+    await sendCompletionEmail(
+        branchName,
+        {
+            successCount,
+            errorCount,
+            duration: durationStr,
+            completionTime: completionTimeStr
+        },
+        sheetLink,
+        folderLink,
+        errors,
+        userEmail
+    );
 
     return {
         success: true,
