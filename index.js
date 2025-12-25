@@ -796,9 +796,11 @@ async function processBranch(params) {
                 if (!rawVal || typeof rawVal !== 'string') return;
 
                 // Typical value: /Vendors/Vendor Invoice Uploads/5ddaf79b.Invoice Upload.014443._19244.pdf
-                // We just want the filename
-                const filename = path.basename(rawVal);
-                if (!filename || !filename.toLowerCase().endsWith('.pdf')) return; // Simple check
+                // force split by '/' to handle AppSheet path format regardless of OS
+                const filename = rawVal.split('/').pop();
+                if (!filename) return; 
+                
+                // console.log(`Searching for: ${filename}`); // Debug
 
                 try {
                     // Search in Source Folder
