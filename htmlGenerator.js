@@ -4,13 +4,13 @@ const MAX_CELL_LENGTH = 50;
 const CUSTOMER_COLUMNS = [
     "First Name", "Last Name", "Secondary Name", "Secondary Last Name", 
     "Address", "Unit #", "Phone", "Mobile", "Email", "Date of Birth", "Age", 
-    "Secondary Age", "Senior Citizen", "Customer Files", "Create By", 
+    "Secondary Age", "Senior Citizen", "Create By", 
     "TimeStamp", "Projects Price SubTotal", "Finance Total Approve", 
     "Total Loan", "Total Used", "Total Spent", "Total Cost", "Total Profit"
 ];
 
 const PROJECT_COLUMNS = [
-    "Project ID", "Customer Address", "Unit #", "Project Folder", "Lead Source", 
+    "Project ID", "Customer Address", "Unit #", "Lead Source", 
     "Project Status", "Sales Rep", "Contract Sign Date", "HOA", "Project Type", 
     "Production Manager", "Project Manager", "Finance Manager", "Project Price", 
     "Project Balance", "Project Cost", "Total Used", "Finance Balance", "Anticipated", 
@@ -264,11 +264,15 @@ function generateHtmlReport(data) {
             <thead class="bg-gray-50">
                 <tr>
                     <th scope="col" class="w-8 px-2 py-2"></th> <!-- Expander -->
-                    ${CUSTOMER_COLUMNS.map(col => `
-                        <th scope="col" class="px-2 py-2 text-left text-[10px] font-semibold text-gray-900 capitalize border-r border-gray-200 last:border-0 align-bottom">
+                    ${CUSTOMER_COLUMNS.map(col => {
+                        const isAddress = col.toLowerCase() === 'address';
+                        const widthClass = isAddress ? 'min-w-[200px]' : '';
+                        return `
+                        <th scope="col" class="px-2 py-2 text-left text-[10px] font-semibold text-gray-900 capitalize border-r border-gray-200 last:border-0 align-bottom ${widthClass}">
                             ${col}
                         </th>
-                    `).join('')}
+                        `;
+                    }).join('')}
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-200 bg-white">
@@ -282,11 +286,16 @@ function generateHtmlReport(data) {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                             </svg>
                         </td>
-                        ${custIndices.map(idx => `
-                            <td class="px-2 py-1 text-xs text-gray-700 border-r border-gray-100 last:border-0 whitespace-normal break-words">
+                        ${custIndices.map((idx, i) => {
+                            const colName = CUSTOMER_COLUMNS[i];
+                            const isAddress = colName && colName.toLowerCase() === 'address';
+                            const widthClass = isAddress ? 'min-w-[200px]' : '';
+                            return `
+                            <td class="px-2 py-1 text-xs text-gray-700 border-r border-gray-100 last:border-0 whitespace-normal break-words ${widthClass}">
                                 ${idx !== -1 ? escapeHtml(cust.row[idx]) : ''}
                             </td>
-                        `).join('')}
+                            `;
+                        }).join('')}
                     </tr>
 
                     <!-- NESTED PROJECTS (Hidden by default) -->
@@ -339,11 +348,15 @@ function generateHtmlReport(data) {
                                         <thead class="bg-blue-50">
                                             <tr>
                                                 <th class="w-6 px-2 py-1"></th>
-                                                ${PROJECT_COLUMNS.map(col => `
-                                                    <th class="px-2 py-1 text-left text-[10px] font-bold text-blue-700 capitalize border-r border-blue-100 align-bottom">
+                                                ${PROJECT_COLUMNS.map(col => {
+                                                    const isAddress = col.toLowerCase() === 'customer address';
+                                                    const widthClass = isAddress ? 'min-w-[200px]' : '';
+                                                    return `
+                                                    <th class="px-2 py-1 text-left text-[10px] font-bold text-blue-700 capitalize border-r border-blue-100 align-bottom ${widthClass}">
                                                         ${col}
                                                     </th>
-                                                `).join('')}
+                                                    `;
+                                                }).join('')}
                                             </tr>
                                         </thead>
                                         <tbody class="divide-y divide-blue-50">
@@ -356,11 +369,16 @@ function generateHtmlReport(data) {
                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                                                         </svg>
                                                     </td>
-                                                    ${projIndices.map(idx => `
-                                                        <td class="px-2 py-1 text-gray-600 border-r border-blue-50 last:border-0 whitespace-normal break-words">
+                                                    ${projIndices.map((idx, i) => {
+                                                        const colName = PROJECT_COLUMNS[i];
+                                                        const isAddress = colName && colName.toLowerCase() === 'customer address';
+                                                        const widthClass = isAddress ? 'min-w-[200px]' : '';
+                                                        return `
+                                                        <td class="px-2 py-1 text-gray-600 border-r border-blue-50 last:border-0 whitespace-normal break-words ${widthClass}">
                                                             ${idx !== -1 ? escapeHtml(proj.row[idx]) : ''}
                                                         </td>
-                                                    `).join('')}
+                                                        `;
+                                                    }).join('')}
                                                 </tr>
                                                 
                                                 <!-- DETAILS: FINANCE & DOCS (Hidden) -->

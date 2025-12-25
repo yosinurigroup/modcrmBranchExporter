@@ -462,7 +462,7 @@ async function filterData(drive, sheets, customersData, branchName) {
     // 1. PROJECTS: Remove "Last Edit By", "Last Edit On"
     //    We retain Project ID internally (usually first col) if it's not in remove list, 
     //    but user only asked to remove these specific 2.
-    const projectsRemove = ["Last Edit By", "Last Edit On"];
+    const projectsRemove = ["Last Edit By", "Last Edit On", "Project Folder"];
     const cleanProjects = filterColumns(pHeader, filteredProjects, projectsRemove);
 
     // 2. CUSTOMER FINANCE: Remove customerFinanceID, Customer ID, ProjectID, Branch
@@ -478,7 +478,7 @@ async function filterData(drive, sheets, customersData, branchName) {
     const cleanPP = filterColumns(ppRaw.header, filteredProjectPayments, ppRemove);
 
     // 5. CUSTOMERS: Remove specific columns
-    const custRemoveList = ["Customer ID", "Update", "Folder Id", "Last Edit By", "Last Edit On", "Favorit"];
+    const custRemoveList = ["Customer ID", "Update", "Folder Id", "Last Edit By", "Last Edit On", "Favorit", "Customer Files"];
     const cleanCustomers = filterColumns(cHeader, filteredCustomers, custRemoveList);
 
     // 6. NOTES (Special handling for HTML vs Sheet)
