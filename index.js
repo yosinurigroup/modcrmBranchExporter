@@ -548,7 +548,14 @@ async function filterData(drive, sheets, customersData, branchName) {
     if (vendorsRaw.rows.length > 0 && filteredVendorInvoices.length > 0) {
         const activeVendorIds = [...new Set(filteredVendorInvoices.map(row => row[1]))]; // Column B is Vendor
         filteredVendors = vendorsRaw.rows.filter(row => activeVendorIds.includes(row[0])); // Column A is Vendor ID / Name link
+        filteredVendors = vendorsRaw.rows.filter(row => activeVendorIds.includes(row[0])); // Column A is Vendor ID / Name link
     }
+
+    const VENDORS_KEEP = [
+        "Vendor Name", "Vendor Email", "Vendor Phone", 
+        "Vendor Contact Person", "Vendor Address"
+    ];
+    const sheetVendors = keepColumns(vendorsRaw.header, filteredVendors, VENDORS_KEEP);
 
     const sheetProd = keepColumns(prodRaw.header, filteredProjectProduction, PROJ_PROD_KEEP);
 
@@ -584,7 +591,9 @@ async function filterData(drive, sheets, customersData, branchName) {
         sheetCF: cleanCF,
         sheetPF: cleanPF,
         sheetPP: cleanPP,
+        sheetPP: cleanPP,
         sheetProd: sheetProd, // Cleaned for Sheet
+        sheetVendors, // Cleaned for Sheet
         
         // Notes handled separately
         sheetNotes,
@@ -759,7 +768,9 @@ async function processBranch(params) {
         vendorInvoicesHeader, filteredVendorInvoices,
         
         // Cleaned sets for Spreadsheet
+        // Cleaned sets for Spreadsheet
         sheetProjects, sheetCustomers, sheetCF, sheetPF, sheetPP, sheetProd, sheetNotes,
+        sheetVendors,
         
         // HTML specific (notes)
         htmlNotes 
@@ -776,7 +787,7 @@ async function processBranch(params) {
     if (sheetPP) await writeSheet(sheets, newSheetId, 'Project Payments', sheetPP.header, sheetPP.rows);
     if (permitsHeader) await writeSheet(sheets, newSheetId, 'Projects Permits', permitsHeader, filteredProjectsPermits);
     if (sheetProd) await writeSheet(sheets, newSheetId, 'Project Production', sheetProd.header, sheetProd.rows);
-    if (vendorsHeader) await writeSheet(sheets, newSheetId, 'Vendors', vendorsHeader, filteredVendors);
+    if (sheetVendors) await writeSheet(sheets, newSheetId, 'Vendors', sheetVendors.header, sheetVendors.rows);
     if (vendorInvoicesHeader) await writeSheet(sheets, newSheetId, 'Vendor Invoices', vendorInvoicesHeader, filteredVendorInvoices);
     if (sheetNotes) await writeSheet(sheets, newSheetId, 'Notes', sheetNotes.header, sheetNotes.rows);
 
