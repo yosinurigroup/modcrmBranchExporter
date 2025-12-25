@@ -505,127 +505,32 @@ async function filterData(drive, sheets, customersData, branchName) {
     console.log(`Filtered: Projects=${cleanProjects.rows.length}, CF=${cleanCF.rows.length}, PF=${cleanPF.rows.length}, PP=${cleanPP.rows.length}, Notes=${filteredNotes.length}`);
 
     return { 
-        // Return CLEANED versions for both Sheet and HTML
-        pHeader: cleanProjects.header, filteredProjects: cleanProjects.rows,
-        cHeader: cleanCustomers.header, filteredCustomers: cleanCustomers.rows,
+        // Return RAW versions for HTML Generator (preserves IDs and indices for linking)
+        pHeader, filteredProjects, 
+        cHeader, filteredCustomers, 
         
         mdHeader, filteredMissingDocs, 
         
-        pfHeader: cleanPF.header, filteredProjectFinance: cleanPF.rows,
+        pfHeader, filteredProjectFinance,
         
-        cfHeader: cleanCF.header, filteredCustomerFinance: cleanCF.rows,
+        cfHeader, filteredCustomerFinance,
         
         fmdHeader, filteredFinanceMissingDocs,
         
-        ppHeader: cleanPP.header, filteredProjectPayments: cleanPP.rows,
+        ppHeader, filteredProjectPayments,
         
         permitsHeader, filteredProjectsPermits,
         
-        // Notes handled separately
-        sheetNotes,
-        htmlNotes,
-
-        // Raw data retained if needed for linking logic that relies on IDs removed from view?
-        // Note: HTML generation might need IDs. If we strip IDs (like ProjectID from CF), linking might break.
-        // Let's check htmlGenerator logic.
-        // htmlGenerator uses "customerMap" built from `customers`. It uses `cust.id` (Column 0 usually).
-        // If we remove "Customer ID" from filteredCustomers, we might break linking if ID was in that column.
-        // However, standard "Customer ID" is column A.
-        // The user said "remove Customer ID... from spreadsheet and html view".
-        // BUT we need it for hierarchy. 
-        // Solution: We must pass raw data for logic, but clean data for display?
-        // Actually, for simplicity, let's pass the CLEAN data to writeSheet.
-        // For HTML generator, we might need the keys. 
-        // `generateHtmlReport` relies on indexes. If we remove columns, indexes shift.
-        // `generateHtmlReport` does key-based matching? No, it often uses predefined columns or indexes.
-        
-        // CHECK: htmlGenerator:
-        // const idIdx = customerHeader.indexOf('Customer ID');
-        // If we remove 'Customer ID', idIdx is -1, and logic breaks.
-        // WE MUST KEEP IDs in the data passed to `generateHtmlReport` OR `generateHtmlReport` must handle it.
-        // User asked to remove from "html view". 
-        // Best approach: Pass RAW data to `generateHtmlReport` but tell it to HIDE/IGNORE columns?
-        // OR: Update `generateHtmlReport` to handle missing ID column?
-        // It's safer to pass FULL data to `generateHtmlReport` and let IT decide what to render (which we updated in PROJECT_COLUMNS/CUSTOMER_COLUMNS).
-        // BUT for the "Customer Finance" and others which are dynamic, we need to care.
-        
-        // REVISED STRATEGY:
-        // 1. Return `sheetData` (cleaned) for writing to Sheets.
-        // 2. Return `htmlData` (cleaned or raw?)
-        //    - HTML generator uses `header` to find columns.
-        //    - If we remove ID columns from CF/PF/PP, we can't link them to Customers/Projects!
-        //    - Ex: Customer Finance needs `Customer ID` to link to Customer.
-        //    - Ex: Project Payments needs `Project ID` (was "Record ID" or "Project ID"?) to link.
-        
-        // SO: We CANNOT remove ID columns from the data passed to `generateHtmlReport` because it performs the linking.
-        // We must ONLY remove them from the Spreadsheet write and the HTML *Render*.
-        // The user said "remove ... from html view".
-        
-        // Okay, we will return:
-        // A) Sets for Sheets (Cleaned)
-        // B) Sets for HTML (Raw, but with "View" columns filtered effectively by logic? 
-        //    No, `generateHtmlReport` renders everything in the headers provided for child tables (CF, PP, PF).
-        //    So if we pass raw headers, it renders raw columns.
-        
-        // SOLUTION for Child Tables (CF, PF, PP):
-        // We need TWO versions: 
-        // 1. Raw (with IDs) for Linking.
-        // 2. Clean (without IDs) for Rendering.
-        
-        // Actually, `generateHtmlReport` takes `data`. 
-        // It builds hierarchy using Raw data.
-        // Then it renders. 
-        // We should pass Raw data to `generateHtmlReport`, but update `generateHtmlReport` to NOT render the ID columns.
-        // OR: We pass a `displayHeader` to `generateHtmlReport`.
-        
-        // Let's stick to the pattern we used for Notes:
-        // `htmlNotes` kept ProjectID but we hid it in rendering.
-        
-        // For CF, PF, PP:
-        // We will create `htmlCF`, `htmlPF`, `htmlPP` which:
-        // - KEEP the linking IDs (Customer ID, Project ID).
-        // - REMOVE the other unwanted columns.
-        // - And in `htmlGenerator`, we must ensure we don't render the linking IDs if requested to hide.
-        
-        // WAIT. User said "remove Customer ID... from Customer Finance".
-        // If we remove it from `cfHeader` passed to HTML, we can't link.
-        // So we must keep it in the data, but use a filtered header for display?
-        // `htmlGenerator` renders `data.customerFinance.header.map(...)`.
-        
-        // Let's create `html*` objects that have:
-        // `header`: The display header (minus hidden cols).
-        // `rows`: The rows (minus hidden cols? NO, rows must match header indices).
-        
-        // Converting rows to match new header means we LOSE the ID column, so we can't link!
-        // This is the Catch-22.
-        // We need the ID to build the tree.
-        
-        // PROPOSAL:
-        // 1. `processBranch` passes RAW data to `generateHtmlReport`.
-        // 2. `generateHtmlReport` builds the tree using RAW data (finding IDs by name).
-        // 3. `generateHtmlReport` THEN renders the tables using a FILTERED list of columns.
-        //    We can pass a "excludeColumns" map to `generateHtmlReport`.
-        
-        // This is cleanest. 
-        // So `filterData` returns:
-        // - `sheet*` (Fully cleaned for spreadsheet)
-        // - `raw*` (Original filtered data for HTML logic)
-        
-        // And we update `generateHtmlReport` to accept exclusion lists or we pre-calculate renderable subsets inside it.
-        // Let's go with returning `sheet*` sets for the writer, and keeping `filtered*` as raw for HTML.
-        // But wait, the user wants to remove columns from HTML *View*.
-        // So we need to tell HTML generator which columns to hide.
-        
-        rawProjects: { header: pHeader, rows: filteredProjects },
-        rawCustomers: { header: cHeader, filteredCustomers }, // etc
-        
-        // Return cleaned sets for spreadsheet
+        // Return CLEANED versions for Spreadsheet Writer
         sheetProjects: cleanProjects,
         sheetCustomers: cleanCustomers,
         sheetCF: cleanCF,
         sheetPF: cleanPF,
         sheetPP: cleanPP,
-        sheetNotes: sheetNotes, // already defined
+        
+        // Notes handled separately
+        sheetNotes,
+        htmlNotes,
     };
 }
 
