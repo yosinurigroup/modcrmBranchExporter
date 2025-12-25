@@ -22,6 +22,18 @@ const PROJECT_COLUMNS = [
     "Money On The Table", "HOA Status"
 ];
 
+const VENDOR_COLUMNS = [
+    "Vendor Name", "Vendor Email", "Vendor Phone", 
+    "Vendor Contact Person", "Vendor Address"
+];
+
+const VENDOR_INVOICE_COLUMNS = [
+    "Vendor", "Project Address", "Project #", "Project Type", 
+    "Project Equipments", "Invoice #", "Invoice Amount", 
+    "Invoice Date", "Due Date", "Invoice Note", 
+    "Create By", "TimeStamp"
+];
+
 function escapeHtml(text) {
     if (text === null || text === undefined) return '';
     return String(text)
@@ -93,6 +105,8 @@ function generateHtmlReport(data) {
         notes,
         courses,
         projectProduction, // New
+        vendors,
+        vendorInvoices,
         branchName 
     } = data;
 
@@ -108,7 +122,9 @@ function generateHtmlReport(data) {
         cf: ["customerFinanceID", "Customer ID", "ProjectID", "Branch"],
         pf: ["projectFinanceID", "customerFinanceID"],
         pp: ["customerFinanceID", "Record ID", "Customer"],
-        prod: [] // We will filter PROD by "Keep" logic manually
+        pp: ["customerFinanceID", "Record ID", "Customer"],
+        prod: [], // We will filter PROD by "Keep" logic manually
+        vendorInvoices: [] // Show all specified columns
     };
     
     const PROJ_PROD_DISPLAY = [
@@ -221,7 +237,49 @@ function generateHtmlReport(data) {
     linkDataToProject(projectProduction.rows, prodPIdIdx, 'projectProduction');
 
 
-    // 3. Generate HTML
+    linkDataToProject(notes.rows, notesPIdIdx, 'notes');
+    linkDataToProject(projectProduction.rows, prodPIdIdx, 'projectProduction');
+
+
+    // --- 3. BUILD VENDOR HIERARCHY ---
+    const vendorIndices = mapHeaders(VENDOR_COLUMNS, vendors ? vendors.header : []);
+    const vendorInvoiceIndices = mapHeaders(VENDOR_INVOICE_COLUMNS, vendorInvoices ? vendorInvoices.header : []);
+    
+    // Determine Vendor ID Index in Source
+    const vIdIdx = vendors ? mapHeaders(["Row ID"], vendors.header)[0] : -1;
+    // Determine Vendor Match Column in Invoices (Column B -> index 1)
+    // Actually typically we look up by name or ID. User said: 
+    // "Vendor Invoices column Vendor in column B" MATCHES "Row ID column A" of Vendors.
+    // Let's assume typical index 1 for "Vendor" in Invoices (Col B).
+    const viVendorIdx = 1; 
+
+    // Build Vendor Map
+    const vendorMap = {};
+    if (vendors && vendors.rows) {
+        vendors.rows.forEach(row => {
+            const vid = vIdIdx !== -1 ? row[vIdIdx] : null;
+            if (vid) {
+                vendorMap[vid] = {
+                    id: vid,
+                    row: row,
+                    invoices: []
+                };
+            }
+        });
+    }
+
+    // Link Invoices to Vendors
+    if (vendorInvoices && vendorInvoices.rows) {
+        vendorInvoices.rows.forEach(row => {
+            const vid = row[viVendorIdx]; // Link by Vendor ID
+            if (vid && vendorMap[vid]) {
+                vendorMap[vid].invoices.push(row);
+            }
+        });
+    }
+
+
+    // 4. Generate HTML
     const dateStr = new Date().toLocaleString();
 
     return `<!DOCTYPE html>
@@ -248,6 +306,23 @@ function generateHtmlReport(data) {
                 if(icon) icon.classList.remove('rotate-90');
             }
         }
+
+        function openTab(tabName) {
+            const tabs = ['tab-customers', 'tab-vendors'];
+            const btns = ['btn-customers', 'btn-vendors'];
+            
+            tabs.forEach(t => {
+                document.getElementById(t).classList.add('hidden');
+            });
+            btns.forEach(b => {
+                document.getElementById(b).classList.remove('bg-blue-600', 'text-white');
+                document.getElementById(b).classList.add('bg-gray-200', 'text-gray-700');
+            });
+
+            document.getElementById('tab-' + tabName).classList.remove('hidden');
+            document.getElementById('btn-' + tabName).classList.add('bg-blue-600', 'text-white');
+            document.getElementById('btn-' + tabName).classList.remove('bg-gray-200', 'text-gray-700');
+        }
     </script>
 </head>
 <body class="bg-gray-50 text-gray-800 p-4">
@@ -258,7 +333,18 @@ function generateHtmlReport(data) {
         <p class="text-xs text-gray-500 mt-1">Generated: ${dateStr}</p>
     </div>
 
-    <!-- MAIN CUSTOMER TABLE -->
+    <!-- TABS NAVIGATION -->
+    <div class="mb-4 flex space-x-2">
+        <button id="btn-customers" onclick="openTab('customers')" class="px-4 py-2 rounded-md font-medium text-sm bg-blue-600 text-white shadow-sm hover:bg-blue-700 focus:outline-none">
+            Customers
+        </button>
+        <button id="btn-vendors" onclick="openTab('vendors')" class="px-4 py-2 rounded-md font-medium text-sm bg-gray-200 text-gray-700 shadow-sm hover:bg-gray-300 focus:outline-none">
+            Vendors
+        </button>
+    </div>
+
+    <!-- MAIN CUSTOMER TABLE (Wrapped in Tab Div) -->
+    <div id="tab-customers">
     <div class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg bg-white">
         <table class="min-w-full divide-y divide-gray-300">
             <thead class="bg-gray-50">
@@ -511,6 +597,13 @@ function generateHtmlReport(data) {
                                                 `;
                                             }).join('')}
                                         </tbody>
+                                        <tfoot class="bg-blue-50">
+                                            <tr>
+                                                <td colspan="${PROJECT_COLUMNS.length + 1}" class="px-4 py-2 text-xs text-blue-600 font-semibold text-right">
+                                                    Total Projects: ${cust.projects.length}
+                                                </td>
+                                            </tr>
+                                        </tfoot>
                                     </table>
                                 </div>
                                 `} <!-- End Projects Table Loop -->
@@ -521,6 +614,80 @@ function generateHtmlReport(data) {
                 }).join('')}
             </tbody>
         </table>
+    </div>
+    </div> <!-- END CUSTOMERS TAB -->
+
+    <!-- VENDORS TAB -->
+    <div id="tab-vendors" class="hidden">
+        <div class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg bg-white">
+            <table class="min-w-full divide-y divide-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="w-8 px-2 py-2"></th>
+                        ${VENDOR_COLUMNS.map(col => `
+                             <th scope="col" class="px-2 py-2 text-left text-[10px] font-semibold text-gray-900 capitalize border-r border-gray-200 last:border-0 align-bottom">
+                                ${col}
+                            </th>
+                        `).join('')}
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                    ${Object.values(vendorMap).map((vend, vIdx) => {
+                        const vendRowId = `vend-${vIdx}`;
+                        return `
+                        <!-- VENDOR ROW -->
+                        <tr class="hover:bg-purple-50 cursor-pointer transition-colors border-l-4 border-transparent hover:border-purple-500" onclick="toggleRow('${vendRowId}')">
+                             <td class="px-2 py-1 text-center">
+                                <svg id="icon-${vendRowId}" class="h-4 w-4 text-gray-400 transition-transform transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                                </svg>
+                            </td>
+                            ${vendorIndices.map(idx => `
+                                <td class="px-2 py-1 text-xs text-gray-700 border-r border-gray-100 last:border-0 whitespace-normal break-words">
+                                    ${idx !== -1 ? escapeHtml(vend.row[idx]) : ''}
+                                </td>
+                            `).join('')}
+                        </tr>
+
+                        <!-- VENDOR INVOICES (Nested) -->
+                        <tr id="${vendRowId}" class="hidden bg-gray-50">
+                            <td colspan="${VENDOR_COLUMNS.length + 1}" class="px-4 py-4 inset-shadow">
+                                <div class="ml-4 pl-4 border-l-2 border-purple-200">
+                                    <h3 class="text-sm font-bold text-purple-800 mb-2 uppercase tracking-wide">Vendor Invoices (${vend.invoices.length})</h3>
+                                    ${vend.invoices.length === 0 ? '<p class="text-xs text-gray-500 italic">No invoices found.</p>' : `
+                                        <div class="overflow-x-auto border rounded-md border-purple-100 bg-white shadow-sm">
+                                            <table class="min-w-full divide-y divide-purple-100">
+                                                <thead class="bg-purple-50">
+                                                    <tr>
+                                                        ${vendorInvoiceIndices.map((origIdx, i) => `
+                                                            <th class="px-2 py-1 text-left text-[10px] font-bold text-purple-700 capitalize border-r border-purple-100 align-bottom">
+                                                                ${VENDOR_INVOICE_COLUMNS[i]}
+                                                            </th>
+                                                        `).join('')}
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-purple-50">
+                                                    ${vend.invoices.map(invRow => `
+                                                        <tr class="hover:bg-purple-50/50">
+                                                            ${vendorInvoiceIndices.map(idx => `
+                                                                <td class="px-2 py-1 text-[11px] text-gray-600 border-r border-purple-50 last:border-0 whitespace-normal break-words">
+                                                                    ${idx !== -1 ? escapeHtml(invRow[idx]) : ''}
+                                                                </td>
+                                                            `).join('')}
+                                                        </tr>
+                                                    `).join('')}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    `}
+                                </div>
+                            </td>
+                        </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
     </div>
 
 </body>

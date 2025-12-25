@@ -17,6 +17,8 @@ const PROJECT_PRODUCTION_SHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1
 
 const CUSTOMER_FINANCE_SHEET_ID = '1FpE891a27W173u45o6N4u9-2X54e_2W_Crr0QOqj7Wc'; // Customer Finance (Source)
 const FINANCE_MISSING_DOCS_SHEET_ID = '1v-7yK9d3D4gM3OXtHj65oKyTjH9hP1jQW-T0u3q6G5o'; // Finance Missing Documents (Source)
+const VENDOR_INVOICES_SHEET_ID = '1RbssAhXfN1cMqG2M26jhGGHohrBGeWrYZr7hCbUzEzE'; // Vendor Invoices source
+const VENDORS_SHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s'; // Vendors source (same as source/prod for now)
 const LOG_SPREADSHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s';
 const APP_ID = 'fea7f1b0-d312-4ae4-a923-aeea438d9ea0';
 const ACCESS_KEY = 'V2-ISEP6-P7hiF-OU44l-dWLZH-YYHPd-3fFox-IXJc0-wrnkJ';
@@ -334,6 +336,8 @@ async function filterData(drive, sheets, customersData, branchName) {
     const prodRaw = await fetchSheet(PROJECT_PRODUCTION_SHEET_ID, 'Project Production!A1:Z');
     const cfRaw = await fetchSheet(CUSTOMER_FINANCE_SHEET_ID, 'Customer Finance!A1:Z');
     const fmdRaw = await fetchSheet(FINANCE_MISSING_DOCS_SHEET_ID, 'Finance Missing Documents!A1:Z');
+    const vendorInvoicesRaw = await fetchSheet(VENDOR_INVOICES_SHEET_ID, 'Vendor Invoices!A1:Z');
+    const vendorsRaw = await fetchSheet(VENDORS_SHEET_ID, 'Vendors!A1:Z');
 
     const pHeader = projectsRaw.header;
     const cHeader = customersRaw.header;
@@ -521,6 +525,31 @@ async function filterData(drive, sheets, customersData, branchName) {
         return { header: newHeader, rows: newRows };
     };
 
+    // Filter Vendors Logic
+    let filteredVendorInvoices = [];
+    let filteredVendors = [];
+
+    // Filter Vendor Invoices by Project ID (Column D -> index 3)
+    if (vendorInvoicesRaw.rows.length > 0) {
+        // Project ID is in column D (index 3) per user spec
+        filteredVendorInvoices = vendorInvoicesRaw.rows.filter(row => {
+            const pid = row[3]; 
+            // We need validProjectIds from the if(pProjectIdCol !== -1) block. 
+            // Recalculating valid IDs here to be safe (safely accessible scope?)
+            // We can derive it again from filteredProjects
+            const pIdIdx = pHeader ? pHeader.findIndex(h => h && (h.toLowerCase().includes('project id') || h.toLowerCase() === 'id' || h.toLowerCase() === 'pid')) : -1;
+            if (pIdIdx === -1) return false;
+            const valid = filteredProjects.map(r => r[pIdIdx]).includes(pid);
+            return valid;
+        });
+    }
+
+    // Filter Vendors by Vendor ID (Column A -> index 0) matching Vendor Invoices Vendor (Column B -> index 1)
+    if (vendorsRaw.rows.length > 0 && filteredVendorInvoices.length > 0) {
+        const activeVendorIds = [...new Set(filteredVendorInvoices.map(row => row[1]))]; // Column B is Vendor
+        filteredVendors = vendorsRaw.rows.filter(row => activeVendorIds.includes(row[0])); // Column A is Vendor ID / Name link
+    }
+
     const sheetProd = keepColumns(prodRaw.header, filteredProjectProduction, PROJ_PROD_KEEP);
 
     console.log(`Filtered: Projects=${cleanProjects.rows.length}, CF=${cleanCF.rows.length}, PF=${cleanPF.rows.length}, PP=${cleanPP.rows.length}, Notes=${filteredNotes.length}, Prod=${sheetProd.rows.length}`);
@@ -542,7 +571,12 @@ async function filterData(drive, sheets, customersData, branchName) {
         
         permitsHeader: permitsRaw.header, filteredProjectsPermits,
         
+        permitsHeader: permitsRaw.header, filteredProjectsPermits,
+        
         prodHeader: prodRaw.header, filteredProjectProduction, // RAW data with IDs for HTML linking
+
+        vendorsHeader: vendorsRaw.header, filteredVendors,
+        vendorInvoicesHeader: vendorInvoicesRaw.header, filteredVendorInvoices,
         
         // Return CLEANED versions for Spreadsheet Writer
         sheetProjects: cleanProjects,
