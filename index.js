@@ -11,6 +11,8 @@ const TOKEN_PATH = 'token.json';
 // ====== CONSTANTS FROM YOUR APPS SCRIPT ======
 const PARENT_FOLDER_ID = '14FpsVpcVHyElklst8spOSVmftqch-9eo';
 const SOURCE_SHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s'; // contains Projects and Customers data
+const PERMITS_SHEET_ID = '1GUfwe_bSuZuVdh-fqrVO4uiX7NJVUYh_wKOXA7L_Bks';
+const NOTES_SHEET_ID = '1pLBJ0Trr6N3ZmN-FuARRfA9oXj04L_Q2RMOxuEnYbfI';
 const LOG_SPREADSHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s';
 const APP_ID = 'fea7f1b0-d312-4ae4-a923-aeea438d9ea0';
 const ACCESS_KEY = 'V2-ISEP6-P7hiF-OU44l-dWLZH-YYHPd-3fFox-IXJc0-wrnkJ';
@@ -310,29 +312,49 @@ async function filterData(drive, sheets, customersData, branchName) {
     const customersRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Customers!A1:Z' });
 
     // Load additional sheets: Missing Documents and Project Finance
-    let missingDocsRes, projectFinanceRes;
-    try {
-        missingDocsRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Missing Documents!A1:Z' });
-    } catch (e) {
-        console.log('Note: Missing Documents sheet not found or empty');
-        missingDocsRes = { data: { values: [] } };
-    }
-    try {
-        projectFinanceRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Project Finance!A1:Z' });
-    } catch (e) {
-        console.log('Note: Project Finance sheet not found or empty');
-        projectFinanceRes = { data: { values: [] } };
-    }
+    // PLUS: Customer Finance, Finance Missing Documents, Project Payments
+    let missingDocsRes, projectFinanceRes, customerFinanceRes, finMissingDocsRes, projPaymentsRes;
+    
+    // External Sheets
+    let permitsRes, notesRes;
+
+    const fetchSheet = async (id, range) => {
+        try {
+            return await sheets.spreadsheets.values.get({ spreadsheetId: id, range });
+        } catch (e) {
+            console.log(`Note: Sheet ${range} not found or empty in ${id}`);
+            return { data: { values: [] } };
+        }
+    };
+
+    missingDocsRes = await fetchSheet(SOURCE_SHEET_ID, 'Missing Documents!A1:Z');
+    projectFinanceRes = await fetchSheet(SOURCE_SHEET_ID, 'Project Finance!A1:Z');
+    customerFinanceRes = await fetchSheet(SOURCE_SHEET_ID, 'Customer Finance!A1:Z');
+    finMissingDocsRes = await fetchSheet(SOURCE_SHEET_ID, 'Finance Missing Documents!A1:Z');
+    projPaymentsRes = await fetchSheet(SOURCE_SHEET_ID, 'Project Payments!A1:Z');
+    
+    permitsRes = await fetchSheet(PERMITS_SHEET_ID, 'Projects Permits!A1:Z');
+    notesRes = await fetchSheet(NOTES_SHEET_ID, 'Notes!A1:Z');
 
     const pRows = projectsRes.data.values || [];
     const cRows = customersRes.data.values || [];
     const mdRows = missingDocsRes.data.values || [];
     const pfRows = projectFinanceRes.data.values || [];
+    const cfRows = customerFinanceRes.data.values || [];
+    const fmdRows = finMissingDocsRes.data.values || [];
+    const ppRows = projPaymentsRes.data.values || [];
+    const permitsRows = permitsRes.data.values || [];
+    const notesRows = notesRes.data.values || [];
 
     const pHeader = pRows[0];
     const cHeader = cRows[0];
     const mdHeader = mdRows[0];
     const pfHeader = pfRows[0];
+    const cfHeader = cfRows[0];
+    const fmdHeader = fmdRows[0];
+    const ppHeader = ppRows[0];
+    const permitsHeader = permitsRows[0];
+    const notesHeader = notesRows[0];
 
     // Extract customer IDs from the payload
     const customerIds = customersData.map(c => c.customerId);
@@ -366,39 +388,80 @@ async function filterData(drive, sheets, customersData, branchName) {
 
     let filteredMissingDocs = [];
     let filteredProjectFinance = [];
+    let filteredProjectPayments = [];
+    let filteredProjectsPermits = [];
+    let filteredNotes = [];
+    let filteredCustomerFinance = [];
+    let filteredFinanceMissingDocs = [];
 
+    // Filter Project-related tables
     if (pProjectIdCol !== -1) {
         const validProjectIds = filteredProjects.map(row => row[pProjectIdCol]).filter(id => id);
         console.log(`Found ${validProjectIds.length} valid project IDs for filtering additional sheets.`);
 
-        // 1. Missing Documents (matching Project ID from column B -> index 1)
+        // 1. Missing Documents (Column B -> index 1)
         if (mdRows.length > 1) {
-            filteredMissingDocs = mdRows.slice(1).filter(row => {
-                const rowPid = row[1]; // Column B
-                return validProjectIds.includes(rowPid);
-            });
+            filteredMissingDocs = mdRows.slice(1).filter(row => validProjectIds.includes(row[1]));
         }
 
-        // 2. Project Finance (matching ProjectID in column C -> index 2)
+        // 2. Project Finance (Column C -> index 2)
         if (pfRows.length > 1) {
-            filteredProjectFinance = pfRows.slice(1).filter(row => {
-                const rowPid = row[2]; // Column C
-                return validProjectIds.includes(rowPid);
-            });
+            filteredProjectFinance = pfRows.slice(1).filter(row => validProjectIds.includes(row[2]));
         }
-        
-        console.log(`Filtered Missing Documents: ${filteredMissingDocs.length} rows`);
-        console.log(`Filtered Project Finance: ${filteredProjectFinance.length} rows`);
 
-    } else {
-        console.warn('WARNING: Could not identify "Project ID" column in Projects sheet. Skipping additional sheet filtering.');
+        // 3. Project Payments (Column D -> index 3)
+        if (ppRows.length > 1) {
+            filteredProjectPayments = ppRows.slice(1).filter(row => validProjectIds.includes(row[3]));
+        }
+
+        // 4. Projects Permits (Column B -> index 1)
+        if (permitsRows.length > 1) {
+            filteredProjectsPermits = permitsRows.slice(1).filter(row => validProjectIds.includes(row[1]));
+        }
+
+        // 5. Notes (Column D -> index 3)
+        if (notesRows.length > 1) {
+            filteredNotes = notesRows.slice(1).filter(row => validProjectIds.includes(row[3]));
+        }
     }
+
+    // Filter Customer-related tables
+    // 6. Customer Finance (Customer ID in Column B -> index 1, Branch in Column D -> index 3)
+    if (cfRows.length > 1) {
+        filteredCustomerFinance = cfRows.slice(1).filter(row => {
+            const cId = row[1];
+            const branch = row[3];
+            return customerIds.includes(cId) && branch === branchName;
+        });
+    }
+
+    // 7. Finance Missing Documents (match customerFinanceID in Column C -> index 2)
+    // We need to match against ID from Customer Finance. Assuming Customer Finance ID is in Column A -> index 0 (?)
+    // If not specified, we usually assume ID is first column. Let's look for "Finance ID" or "ID" in cfHeader.
+    // However, common pattern is ID in Col A. Let's assume Col A (index 0) of filteredCustomerFinance is the ID.
+    // User said: "Finance Missing Documents (where customerFinanceID match in column C)" matches "customerFinanceID"
+    let validCustFinIds = [];
+    if (filteredCustomerFinance.length > 0) {
+        // Assuming the detailed ID is in the first column (index 0) of Customer Finance
+        validCustFinIds = filteredCustomerFinance.map(row => row[0]).filter(id => id);
+    }
+
+    if (fmdRows.length > 1 && validCustFinIds.length > 0) {
+        filteredFinanceMissingDocs = fmdRows.slice(1).filter(row => validCustFinIds.includes(row[2]));
+    }
+
+    console.log(`Filtered: MD=${filteredMissingDocs.length}, PF=${filteredProjectFinance.length}, PP=${filteredProjectPayments.length}, Permits=${filteredProjectsPermits.length}, Notes=${filteredNotes.length}, CF=${filteredCustomerFinance.length}, FMD=${filteredFinanceMissingDocs.length}`);
 
     return { 
         pHeader, filteredProjects, 
         cHeader, filteredCustomers, 
         mdHeader, filteredMissingDocs, 
-        pfHeader, filteredProjectFinance 
+        pfHeader, filteredProjectFinance,
+        cfHeader, filteredCustomerFinance,
+        fmdHeader, filteredFinanceMissingDocs,
+        ppHeader, filteredProjectPayments,
+        permitsHeader, filteredProjectsPermits,
+        notesHeader, filteredNotes
     };
 }
 
@@ -539,18 +602,24 @@ async function processBranch(params) {
         pHeader, filteredProjects, 
         cHeader, filteredCustomers,
         mdHeader, filteredMissingDocs,
-        pfHeader, filteredProjectFinance
+        pfHeader, filteredProjectFinance,
+        cfHeader, filteredCustomerFinance,
+        fmdHeader, filteredFinanceMissingDocs,
+        ppHeader, filteredProjectPayments,
+        permitsHeader, filteredProjectsPermits,
+        notesHeader, filteredNotes
     } = await filterData(drive, sheets, params.customersData, branchName);
     
     await writeSheet(sheets, newSheetId, 'Projects', pHeader, filteredProjects);
     await writeSheet(sheets, newSheetId, 'Customers', cHeader, filteredCustomers);
     
-    if (mdHeader && mdHeader.length > 0) {
-        await writeSheet(sheets, newSheetId, 'Missing Documents', mdHeader, filteredMissingDocs);
-    }
-    if (pfHeader && pfHeader.length > 0) {
-        await writeSheet(sheets, newSheetId, 'Project Finance', pfHeader, filteredProjectFinance);
-    }
+    if (mdHeader) await writeSheet(sheets, newSheetId, 'Missing Documents', mdHeader, filteredMissingDocs);
+    if (pfHeader) await writeSheet(sheets, newSheetId, 'Project Finance', pfHeader, filteredProjectFinance);
+    if (cfHeader) await writeSheet(sheets, newSheetId, 'Customer Finance', cfHeader, filteredCustomerFinance);
+    if (fmdHeader) await writeSheet(sheets, newSheetId, 'Finance Missing Documents', fmdHeader, filteredFinanceMissingDocs);
+    if (ppHeader) await writeSheet(sheets, newSheetId, 'Project Payments', ppHeader, filteredProjectPayments);
+    if (permitsHeader) await writeSheet(sheets, newSheetId, 'Projects Permits', permitsHeader, filteredProjectsPermits);
+    if (notesHeader) await writeSheet(sheets, newSheetId, 'Notes', notesHeader, filteredNotes);
 
     // Remove default blank sheet
     await sheets.spreadsheets.batchUpdate({
@@ -692,6 +761,11 @@ async function processBranch(params) {
         projects: { header: pHeader, rows: filteredProjects },
         missingDocs: { header: mdHeader, rows: filteredMissingDocs },
         projectFinance: { header: pfHeader, rows: filteredProjectFinance },
+        customerFinance: { header: cfHeader, rows: filteredCustomerFinance },
+        financeMissingDocs: { header: fmdHeader, rows: filteredFinanceMissingDocs },
+        projectPayments: { header: ppHeader, rows: filteredProjectPayments },
+        projectsPermits: { header: permitsHeader, rows: filteredProjectsPermits },
+        notes: { header: notesHeader, rows: filteredNotes },
         branchName
     });
 

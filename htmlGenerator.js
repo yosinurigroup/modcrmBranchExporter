@@ -68,6 +68,11 @@ function generateHtmlReport(data) {
         projects, 
         missingDocs, 
         projectFinance,
+        customerFinance,
+        financeMissingDocs,
+        projectPayments,
+        projectsPermits,
+        notes,
         branchName 
     } = data;
 
@@ -80,10 +85,6 @@ function generateHtmlReport(data) {
     const pIdIdx = mapHeaders(["Project ID"], projects.header)[0];
     const pCIdIdx = mapHeaders(["Customer ID"], projects.header)[0];
     
-    // Fallback indices for linkage if named differently in source
-    // (We rely on logic from index.js mostly, but here we need to link the rows for the view)
-    // Actually index.js passes filtered raw rows. We need to trust the ID columns exist.
-    
     // 2. Build Hierarchy
     const customerMap = {};
 
@@ -92,10 +93,31 @@ function generateHtmlReport(data) {
         customerMap[id] = {
             id: id,
             row: row,
-            projects: []
+            projects: [],
+            customerFinance: []
         };
     });
 
+    // Link Customer Finance (Col B=index 1 is Customer ID)
+    if (customerFinance.rows) {
+        customerFinance.rows.forEach(row => {
+            const cId = row[1];
+            if (customerMap[cId]) {
+                const finRecord = { row: row, missingDocs: [] };
+                // Link Finance Missing Docs (Col C=index 2 is Customer Finance ID)
+                // Assuming ID of this row is in Col A=index 0
+                const cfId = row[0];
+                if (financeMissingDocs.rows) {
+                    financeMissingDocs.rows.forEach(fmdRow => {
+                        if (fmdRow[2] === cfId) finRecord.missingDocs.push(fmdRow);
+                    });
+                }
+                customerMap[cId].customerFinance.push(finRecord);
+            }
+        });
+    }
+
+    // Projects
     projects.rows.forEach(row => {
         const cId = pCIdIdx >= 0 ? row[pCIdIdx] : null;
         const pId = pIdIdx >= 0 ? row[pIdIdx] : null;
@@ -105,31 +127,37 @@ function generateHtmlReport(data) {
                 id: pId,
                 row: row,
                 missingDocs: [],
-                projectFinance: []
+                projectFinance: [],
+                projectPayments: [],
+                projectsPermits: [],
+                notes: []
             });
         }
     });
 
-    // Link Details (Optimized lookup could be done here, but simple loops for now)
-    // Missing Docs (Col 1 is PID in index.js assumption, let's try to map it)
+    // Link Project Details
     const mdPIdIdx = 1; // From index.js
-    missingDocs.rows.forEach(row => {
-        const pId = row[mdPIdIdx];
-        for (const c in customerMap) {
-            const proj = customerMap[c].projects.find(p => p.id === pId);
-            if (proj) { proj.missingDocs.push(row); break; }
-        }
-    });
-
-    // Project Finance (Col 2 is PID in index.js assumption)
     const pfPIdIdx = 2; // From index.js
-    projectFinance.rows.forEach(row => {
-        const pId = row[pfPIdIdx];
-        for (const c in customerMap) {
-            const proj = customerMap[c].projects.find(p => p.id === pId);
-            if (proj) { proj.projectFinance.push(row); break; }
-        }
-    });
+    const ppPIdIdx = 3; // From index.js
+    const permitsPIdIdx = 1; // From index.js
+    const notesPIdIdx = 3; // From index.js
+
+    const linkToProject = (rows, pidIndex, targetArrayName) => {
+        if (!rows) return;
+        rows.forEach(row => {
+            const pId = row[pidIndex];
+            for (const c in customerMap) {
+                const proj = customerMap[c].projects.find(p => p.id === pId);
+                if (proj) { proj[targetArrayName].push(row); break; }
+            }
+        });
+    };
+
+    linkToProject(missingDocs.rows, mdPIdIdx, 'missingDocs');
+    linkToProject(projectFinance.rows, pfPIdIdx, 'projectFinance');
+    linkToProject(projectPayments.rows, ppPIdIdx, 'projectPayments');
+    linkToProject(projectsPermits.rows, permitsPIdIdx, 'projectsPermits');
+    linkToProject(notes.rows, notesPIdIdx, 'notes');
 
     // 3. Generate HTML
     const dateStr = new Date().toLocaleString();
@@ -202,6 +230,34 @@ function generateHtmlReport(data) {
                     <!-- NESTED PROJECTS (Hidden by default) -->
                     <tr id="${custRowId}" class="hidden bg-gray-50">
                         <td colspan="${CUSTOMER_COLUMNS.length + 1}" class="px-4 py-4 inset-shadow">
+                            
+                            <!-- CUSTOMER FINANCE SECTION -->
+                            ${cust.customerFinance.length > 0 ? `
+                            <div class="ml-4 pl-4 border-l-2 border-green-200 mb-6">
+                                <h3 class="text-sm font-bold text-green-800 mb-2 uppercase tracking-wide">Customer Finance</h3>
+                                <div class="overflow-x-auto border rounded-md border-green-100 bg-white shadow-sm">
+                                    <table class="min-w-full divide-y divide-green-100">
+                                        <thead class="bg-green-50">
+                                            <tr>${customerFinance.header.map(h => `<th class="px-2 py-1 text-left text-[10px] font-bold text-green-700">${h}</th>`).join('')}</tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-green-50">
+                                            ${cust.customerFinance.map(cf => `
+                                            <tr>${cf.row.map(c => `<td class="px-2 py-1 text-[11px] text-gray-600 truncate max-w-[150px]">${escapeHtml(c)}</td>`).join('')}</tr>
+                                            ${cf.missingDocs.length > 0 ? `
+                                            <tr><td colspan="${customerFinance.header.length}" class="bg-red-50/30 px-4 py-2">
+                                                <div class="text-[10px] font-bold text-red-700 mb-1">Finance Missing Documents:</div>
+                                                <table class="w-full border border-red-100">
+                                                    <thead class="bg-red-50"><tr>${financeMissingDocs.header.map(h=>`<th class="px-1 py-0.5 text-[9px] text-red-600 text-left">${h}</th>`).join('')}</tr></thead>
+                                                    <tbody>${cf.missingDocs.map(r=>`<tr>${r.map(c=>`<td class="px-1 py-0.5 text-[9px] text-gray-500">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                </table>
+                                            </td></tr>` : ''}
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            ` : ''}
+
                             <div class="ml-4 pl-4 border-l-2 border-blue-200">
                                 <h3 class="text-sm font-bold text-blue-800 mb-2 uppercase tracking-wide">Projects (${cust.projects.length})</h3>
                                 
@@ -266,6 +322,45 @@ function generateHtmlReport(data) {
                                                                         <thead class="bg-white"><tr>${projectFinance.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
                                                                         <tbody class="divide-y divide-indigo-50">${proj.projectFinance.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
                                                                      </table></div>`
+                                                                }
+                                                            </div>
+
+                                                            <!-- PROJECT PAYMENTS -->
+                                                            <div class="border rounded border-emerald-100">
+                                                                <div class="bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700 uppercase border-b border-emerald-100">
+                                                                    Project Payments ${proj.projectPayments.length ? `(${proj.projectPayments.length})` : ''}
+                                                                </div>
+                                                                ${proj.projectPayments.length > 0 ? 
+                                                                    `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-emerald-50">
+                                                                        <thead class="bg-white"><tr>${projectPayments.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
+                                                                        <tbody class="divide-y divide-emerald-50">${proj.projectPayments.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                    </table></div>` : '<div class="p-2 text-xs text-gray-400">No payments</div>'
+                                                                }
+                                                            </div>
+
+                                                            <!-- PERMITS -->
+                                                            <div class="border rounded border-orange-100">
+                                                                <div class="bg-orange-50 px-2 py-1 text-xs font-bold text-orange-700 uppercase border-b border-orange-100">
+                                                                    Permits ${proj.projectsPermits.length ? `(${proj.projectsPermits.length})` : ''}
+                                                                </div>
+                                                                ${proj.projectsPermits.length > 0 ? 
+                                                                    `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-orange-50">
+                                                                        <thead class="bg-white"><tr>${projectsPermits.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
+                                                                        <tbody class="divide-y divide-orange-50">${proj.projectsPermits.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                    </table></div>` : '<div class="p-2 text-xs text-gray-400">No permits found</div>'
+                                                                }
+                                                            </div>
+
+                                                            <!-- NOTES -->
+                                                            <div class="border rounded border-yellow-100">
+                                                                <div class="bg-yellow-50 px-2 py-1 text-xs font-bold text-yellow-700 uppercase border-b border-yellow-100">
+                                                                    Notes ${proj.notes.length ? `(${proj.notes.length})` : ''}
+                                                                </div>
+                                                                ${proj.notes.length > 0 ? 
+                                                                    `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-yellow-50">
+                                                                        <thead class="bg-white"><tr>${notes.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
+                                                                        <tbody class="divide-y divide-yellow-50">${proj.notes.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[300px] whitespace-normal">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                    </table></div>` : '<div class="p-2 text-xs text-gray-400">No notes</div>'
                                                                 }
                                                             </div>
                                                             
