@@ -31,7 +31,7 @@ const VENDOR_INVOICE_COLUMNS = [
     "Vendor", "Project Address", "Project #", "Project Type", 
     "Project Equipments", "Invoice #", "Invoice Amount", 
     "Invoice Date", "Due Date", "Invoice Note", 
-    "Create By", "TimeStamp"
+    "Invoice Upload", "Create By", "TimeStamp"
 ];
 
 function escapeHtml(text) {
@@ -669,11 +669,21 @@ function generateHtmlReport(data) {
                                                 <tbody class="divide-y divide-purple-50">
                                                     ${vend.invoices.map(invRow => `
                                                         <tr class="hover:bg-purple-50/50">
-                                                            ${vendorInvoiceIndices.map(idx => `
+                                                            ${vendorInvoiceIndices.map((idx, i) => {
+                                                                const colName = VENDOR_INVOICE_COLUMNS[i];
+                                                                const val = idx !== -1 ? invRow[idx] : '';
+                                                                let content = escapeHtml(val);
+                                                                
+                                                                if (colName === 'Invoice Upload' && val && (val.startsWith('http') || val.startsWith('www'))) {
+                                                                    content = `<a href="${val}" target="_blank" class="text-blue-600 hover:text-blue-800 underline">View Invoice</a>`;
+                                                                }
+
+                                                                return `
                                                                 <td class="px-2 py-1 text-[11px] text-gray-600 border-r border-purple-50 last:border-0 whitespace-normal break-words">
-                                                                    ${idx !== -1 ? escapeHtml(invRow[idx]) : ''}
+                                                                    ${content}
                                                                 </td>
-                                                            `).join('')}
+                                                                `;
+                                                            }).join('')}
                                                         </tr>
                                                     `).join('')}
                                                 </tbody>

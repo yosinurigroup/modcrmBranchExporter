@@ -4,6 +4,7 @@ const pLimit = require('p-limit');
 const { google } = require('googleapis');
 const { Resend } = require('resend');
 const { generateHtmlReport } = require('./htmlGenerator');
+const path = require('path');
 
 const CREDENTIALS_PATH = 'credentials.json';
 const TOKEN_PATH = 'token.json';
@@ -19,6 +20,7 @@ const CUSTOMER_FINANCE_SHEET_ID = '1FpE891a27W173u45o6N4u9-2X54e_2W_Crr0QOqj7Wc'
 const FINANCE_MISSING_DOCS_SHEET_ID = '1v-7yK9d3D4gM3OXtHj65oKyTjH9hP1jQW-T0u3q6G5o'; // Finance Missing Documents (Source)
 const VENDOR_INVOICES_SHEET_ID = '1RbssAhXfN1cMqG2M26jhGGHohrBGeWrYZr7hCbUzEzE'; // Vendor Invoices source
 const VENDORS_SHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s'; // Vendors source (same as source/prod for now)
+const VENDOR_INVOICES_SOURCE_FOLDER_ID = '916bN28uwAXSKAmnMn-q3r4ScqlOwrPYeu'; // Source for PDF uploads
 const LOG_SPREADSHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s';
 const APP_ID = 'fea7f1b0-d312-4ae4-a923-aeea438d9ea0';
 const ACCESS_KEY = 'V2-ISEP6-P7hiF-OU44l-dWLZH-YYHPd-3fFox-IXJc0-wrnkJ';
@@ -776,6 +778,72 @@ async function processBranch(params) {
         htmlNotes 
     } = await filterData(drive, sheets, params.customersData, branchName);
     
+    // --- PROCESS VENDOR INVOICES UPLOADS ---
+    if (vendorInvoicesHeader && filteredVendorInvoices.length > 0) {
+        console.log('Processing Vendor Invoice Uploads...');
+        const invUploadIdx = vendorInvoicesHeader.findIndex(h => h && h.toLowerCase().trim() === 'invoice upload');
+        
+        if (invUploadIdx !== -1) {
+            // 1. Create Target Folder
+            const invoicesFolderId = await getOrCreateFolder(drive, branchFolderId, 'Vendor Invoices', false);
+            console.log(`Using Vendor Invoices folder: ${invoicesFolderId}`);
+
+            // 2. Iterate and Copy
+            // Use pLimit for concurrency
+            const uploadLimit = pLimit(5);
+            const uploadTasks = filteredVendorInvoices.map(row => uploadLimit(async () => {
+                const rawVal = row[invUploadIdx];
+                if (!rawVal || typeof rawVal !== 'string') return;
+
+                // Typical value: /Vendors/Vendor Invoice Uploads/5ddaf79b.Invoice Upload.014443._19244.pdf
+                // We just want the filename
+                const filename = path.basename(rawVal);
+                if (!filename || !filename.toLowerCase().endsWith('.pdf')) return; // Simple check
+
+                try {
+                    // Search in Source Folder
+                    const q = `'${VENDOR_INVOICES_SOURCE_FOLDER_ID}' in parents and name = '${filename}' and trashed = false`;
+                    const res = await drive.files.list({ q, fields: 'files(id, name, webViewLink)' });
+                    
+                    if (res.data.files.length > 0) {
+                        const sourceFile = res.data.files[0];
+                        
+                        // Check if already copied to destination to avoid duplicates?
+                        // For sync efficiency, check overlap.
+                        const existQ = `'${invoicesFolderId}' in parents and name = '${filename}' and trashed = false`;
+                        const existRes = await drive.files.list({ q: existQ, fields: 'files(id, webViewLink)' });
+
+                        let finalLink = '';
+                        if (existRes.data.files.length > 0) {
+                           // Exists
+                           console.log(`Skipping existing invoice: ${filename}`);
+                           finalLink = existRes.data.files[0].webViewLink;
+                        } else {
+                           // Copy
+                           console.log(`Copying invoice: ${filename}`);
+                           const copyRes = await drive.files.copy({
+                               fileId: sourceFile.id,
+                               requestBody: { parents: [invoicesFolderId] },
+                               fields: 'id, webViewLink'
+                           });
+                           finalLink = copyRes.data.webViewLink;
+                        }
+
+                        // UPDATE ROW DATA IN PLACE
+                        row[invUploadIdx] = finalLink;
+                    } else {
+                        console.log(`Invoice file not found in source: ${filename}`);
+                    }
+                } catch (err) {
+                    console.error(`Failed to process invoice ${filename}:`, err.message);
+                }
+            }));
+            
+            await Promise.all(uploadTasks);
+        }
+    }
+
+
     // Write Cleaned Data to Spreadsheet
     await writeSheet(sheets, newSheetId, 'Projects', sheetProjects.header, sheetProjects.rows);
     await writeSheet(sheets, newSheetId, 'Customers', sheetCustomers.header, sheetCustomers.rows);
