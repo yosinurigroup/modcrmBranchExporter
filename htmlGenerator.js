@@ -60,6 +60,26 @@ function mapHeaders(desiredHeaders, sourceHeaderRow) {
     });
 }
 
+// Utility to filter headers and row cells based on exclusion list
+const getFilteredTable = (header, rows, excludeList = []) => {
+    if (!header || !rows) return { header: [], rows: [] };
+    const excludeSet = new Set(excludeList.map(h => h.toLowerCase()));
+    
+    // Identify indices to keep
+    const indicesToKeep = [];
+    const newHeader = [];
+    header.forEach((h, i) => {
+        const hClean = h ? h.toString().trim() : '';
+        if (!excludeSet.has(hClean.toLowerCase())) {
+            indicesToKeep.push(i);
+            newHeader.push(hClean);
+        }
+    });
+
+    const newRows = rows.map(r => indicesToKeep.map(i => r[i]));
+    return { header: newHeader, rows: newRows };
+};
+
 function generateHtmlReport(data) {
     const { 
         customers, 
@@ -73,6 +93,13 @@ function generateHtmlReport(data) {
         notes,
         branchName 
     } = data;
+
+    // Define exclusion lists for HTML VIEW (passed by user request)
+    const exclude = {
+        cf: ["customerFinanceID", "Customer ID", "ProjectID", "Branch"],
+        pf: ["projectFinanceID", "customerFinanceID"],
+        pp: ["customerFinanceID", "Record ID", "Customer"]
+    };
 
     // 1. Map Columns
     const custIndices = mapHeaders(CUSTOMER_COLUMNS, customers.header);
