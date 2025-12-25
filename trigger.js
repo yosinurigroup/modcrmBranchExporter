@@ -974,8 +974,7 @@ const payload = {
         }
     ],
     "branchName": "SWS OFFICE",
-    "branchId": "91465ee7",
-    "user": "admin@y2kgrouphosting.com"
+    "branchId": "91465ee7"
 };
 
 // Invoke the process and handle errors

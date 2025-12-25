@@ -305,11 +305,30 @@ async function filterData(drive, sheets, customersData, branchName) {
     const projectsRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Projects!A1:Z' });
     const customersRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Customers!A1:Z' });
 
+    // Load additional sheets: Missing Documents and Project Finance
+    let missingDocsRes, projectFinanceRes;
+    try {
+        missingDocsRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Missing Documents!A1:Z' });
+    } catch (e) {
+        console.log('Note: Missing Documents sheet not found or empty');
+        missingDocsRes = { data: { values: [] } };
+    }
+    try {
+        projectFinanceRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Project Finance!A1:Z' });
+    } catch (e) {
+        console.log('Note: Project Finance sheet not found or empty');
+        projectFinanceRes = { data: { values: [] } };
+    }
+
     const pRows = projectsRes.data.values || [];
     const cRows = customersRes.data.values || [];
+    const mdRows = missingDocsRes.data.values || [];
+    const pfRows = projectFinanceRes.data.values || [];
 
     const pHeader = pRows[0];
     const cHeader = cRows[0];
+    const mdHeader = mdRows[0];
+    const pfHeader = pfRows[0];
 
     // Extract customer IDs from the payload
     const customerIds = customersData.map(c => c.customerId);
@@ -336,7 +355,47 @@ async function filterData(drive, sheets, customersData, branchName) {
 
     console.log(`Filtered Projects: ${filteredProjects.length} rows, Customers: ${filteredCustomers.length} rows`);
 
-    return { pHeader, filteredProjects, cHeader, filteredCustomers };
+    // Filter "Missing Documents" and "Project Finance" based on valid Project IDs from the filtered projects
+    // First, find the "Project ID" column in the Projects sheet. 
+    // We'll look for common names like "Project ID", "ID", or "PID".
+    const pProjectIdCol = pHeader ? pHeader.findIndex(h => h && (h.toLowerCase().includes('project id') || h.toLowerCase() === 'id' || h.toLowerCase() === 'pid')) : -1;
+
+    let filteredMissingDocs = [];
+    let filteredProjectFinance = [];
+
+    if (pProjectIdCol !== -1) {
+        const validProjectIds = filteredProjects.map(row => row[pProjectIdCol]).filter(id => id);
+        console.log(`Found ${validProjectIds.length} valid project IDs for filtering additional sheets.`);
+
+        // 1. Missing Documents (matching Project ID from column B -> index 1)
+        if (mdRows.length > 1) {
+            filteredMissingDocs = mdRows.slice(1).filter(row => {
+                const rowPid = row[1]; // Column B
+                return validProjectIds.includes(rowPid);
+            });
+        }
+
+        // 2. Project Finance (matching ProjectID in column C -> index 2)
+        if (pfRows.length > 1) {
+            filteredProjectFinance = pfRows.slice(1).filter(row => {
+                const rowPid = row[2]; // Column C
+                return validProjectIds.includes(rowPid);
+            });
+        }
+        
+        console.log(`Filtered Missing Documents: ${filteredMissingDocs.length} rows`);
+        console.log(`Filtered Project Finance: ${filteredProjectFinance.length} rows`);
+
+    } else {
+        console.warn('WARNING: Could not identify "Project ID" column in Projects sheet. Skipping additional sheet filtering.');
+    }
+
+    return { 
+        pHeader, filteredProjects, 
+        cHeader, filteredCustomers, 
+        mdHeader, filteredMissingDocs, 
+        pfHeader, filteredProjectFinance 
+    };
 }
 
 // ====== APPSHEET UPDATE ======
@@ -472,9 +531,22 @@ async function processBranch(params) {
     });
 
     // 4) Filter and write data
-    const { pHeader, filteredProjects, cHeader, filteredCustomers } = await filterData(drive, sheets, params.customersData, branchName);
+    const { 
+        pHeader, filteredProjects, 
+        cHeader, filteredCustomers,
+        mdHeader, filteredMissingDocs,
+        pfHeader, filteredProjectFinance
+    } = await filterData(drive, sheets, params.customersData, branchName);
+    
     await writeSheet(sheets, newSheetId, 'Projects', pHeader, filteredProjects);
     await writeSheet(sheets, newSheetId, 'Customers', cHeader, filteredCustomers);
+    
+    if (mdHeader && mdHeader.length > 0) {
+        await writeSheet(sheets, newSheetId, 'Missing Documents', mdHeader, filteredMissingDocs);
+    }
+    if (pfHeader && pfHeader.length > 0) {
+        await writeSheet(sheets, newSheetId, 'Project Finance', pfHeader, filteredProjectFinance);
+    }
 
     // Remove default blank sheet
     await sheets.spreadsheets.batchUpdate({
