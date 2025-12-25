@@ -3,6 +3,7 @@ const fetch = require('node-fetch');
 const pLimit = require('p-limit');
 const { google } = require('googleapis');
 const { Resend } = require('resend');
+const { generateHtmlReport } = require('./htmlGenerator');
 
 const CREDENTIALS_PATH = 'credentials.json';
 const TOKEN_PATH = 'token.json';
@@ -682,10 +683,43 @@ async function processBranch(params) {
     // Generate Summary String
     const summaryText = `Completed: ${successCount} success, ${errorCount} failed. Added ${syncStats.newFiles} files, skipped ${syncStats.skippedFiles}. Duration: ${durationStr}. ${errors.length > 0 ? 'Errors: ' + errors.map(e => e.customer).join(', ') : ''}`;
 
-    // 6) Final Update to AppSheet (Summary)
+    // Generate HTML Report
+    const htmlContent = generateHtmlReport({
+        customers: { header: cHeader, rows: filteredCustomers },
+        projects: { header: pHeader, rows: filteredProjects },
+        missingDocs: { header: mdHeader, rows: filteredMissingDocs },
+        projectFinance: { header: pfHeader, rows: filteredProjectFinance },
+        branchName
+    });
+
+    // Upload HTML to Drive
+    let htmlLink = '';
+    try {
+        const fileRes = await drive.files.create({
+            resource: {
+                name: `${branchName} - Report.html`,
+                parents: [branchFolderId]
+            },
+            media: {
+                mimeType: 'text/html',
+                body: htmlContent
+            },
+            fields: 'webViewLink, id'
+        });
+        htmlLink = fileRes.data.webViewLink;
+        console.log('HTML Report generated:', htmlLink);
+        
+        // Construct a direct raw link or just use webViewLink. 
+        // Note: webViewLink is a preview. 
+    } catch (err) {
+        console.error('Failed to create HTML report:', err.message);
+    }
+
+    // 6) Final Update to AppSheet (Summary + HTML Link)
     console.log('Sending summary to AppSheet...');
     const apiResult = await updateAppSheet(branchId, {
-        ScriptSummary: summaryText
+        ScriptSummary: summaryText,
+        html: htmlLink
     });
 
     // 7) Log the attempt (include error summary)
