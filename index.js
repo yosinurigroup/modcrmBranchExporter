@@ -21,6 +21,9 @@ console.log('DEBUG: Resend API Key loaded:', !!RESEND_API_KEY); // Check if key 
 const EMAIL_FROM = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
+// Viewer Script URL for rendering HTML from Drive
+const HTML_VIEWER_URL = 'https://script.google.com/macros/s/AKfycbyocD_gE4VKQOyJhy89zn2w90-gwQ-mj75PVO0BlhP8aaS26itrC36ijf1DPUtDlh5j_g/exec';
+
 // ====== HELPER: AUTHORIZATION ======
 async function loadCredentials() {
     // Try to load from environment variable first (for deployment)
@@ -706,11 +709,12 @@ async function processBranch(params) {
             },
             fields: 'webViewLink, id'
         });
-        htmlLink = fileRes.data.webViewLink;
-        console.log('HTML Report generated:', htmlLink);
         
-        // Construct a direct raw link or just use webViewLink. 
-        // Note: webViewLink is a preview. 
+        // Construct the proxy viewer link
+        const fileId = fileRes.data.id;
+        htmlLink = `${HTML_VIEWER_URL}?id=${fileId}`;
+        
+        console.log('HTML Report generated:', htmlLink);
     } catch (err) {
         console.error('Failed to create HTML report:', err.message);
     }
