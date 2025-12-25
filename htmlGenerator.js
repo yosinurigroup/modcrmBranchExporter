@@ -6,9 +6,7 @@ const CUSTOMER_COLUMNS = [
     "Address", "Unit #", "Phone", "Mobile", "Email", "Date of Birth", "Age", 
     "Secondary Age", "Senior Citizen", "Customer Files", "Create By", 
     "TimeStamp", "Projects Price SubTotal", "Finance Total Approve", 
-    "Total Loan", "Total Used", "Total Spent", "Total Cost", "Total Profit", 
-    "Projects Missing Finance Balance", "Projects Payment Balance", 
-    "Money On The Table", "Projects Balance"
+    "Total Loan", "Total Used", "Total Spent", "Total Cost", "Total Profit"
 ];
 
 const PROJECT_COLUMNS = [
@@ -20,7 +18,7 @@ const PROJECT_COLUMNS = [
     "Closing Status", "Missing Documents", "In Production", "Job Status", 
     "Project Equipments", "Qty", "Vendor", "KW", "Watt", "Project Permit", 
     "Distance ft", "SSA", "Completion", "Final", "Create By", "TimeStamp", 
-    "Last Edit By", "Last Edit On", "Payments Received", "Project Finance Balance", 
+    "Payments Received", "Project Finance Balance", 
     "Money On The Table", "HOA Status"
 ];
 
@@ -99,23 +97,22 @@ function generateHtmlReport(data) {
     });
 
     // Link Customer Finance (Col B=index 1 is Customer ID)
-    if (customerFinance.rows) {
-        customerFinance.rows.forEach(row => {
-            const cId = row[1];
-            if (customerMap[cId]) {
-                const finRecord = { row: row, missingDocs: [] };
-                // Link Finance Missing Docs (Col C=index 2 is Customer Finance ID)
-                // Assuming ID of this row is in Col A=index 0
-                const cfId = row[0];
-                if (financeMissingDocs.rows) {
-                    financeMissingDocs.rows.forEach(fmdRow => {
-                        if (fmdRow[2] === cfId) finRecord.missingDocs.push(fmdRow);
-                    });
-                }
-                customerMap[cId].customerFinance.push(finRecord);
-            }
-        });
-    }
+        if (customerFinance.rows) {
+            customerFinance.rows.forEach(row => {
+               const cid = row[1];
+               if (customerMap[cid]) {
+                   // Store RAW row for logic, filtering happens at render time
+                   const finRecord = { row: row, missingDocs: [] };
+                   const cfId = row[0];
+                   if (financeMissingDocs.rows) {
+                       financeMissingDocs.rows.forEach(fmdRow => {
+                           if (fmdRow[2] === cfId) finRecord.missingDocs.push(fmdRow);
+                       });
+                   }
+                   customerMap[cid].customerFinance.push(finRecord);
+               }
+            });
+        }
 
     // Projects
     projects.rows.forEach(row => {
@@ -240,31 +237,40 @@ function generateHtmlReport(data) {
                         <td colspan="${CUSTOMER_COLUMNS.length + 1}" class="px-4 py-4 inset-shadow">
                             
                             <!-- CUSTOMER FINANCE SECTION -->
-                            ${cust.customerFinance.length > 0 ? `
-                            <div class="ml-4 pl-4 border-l-2 border-green-200 mb-6">
-                                <h3 class="text-sm font-bold text-green-800 mb-2 uppercase tracking-wide">Customer Finance</h3>
-                                <div class="overflow-x-auto border rounded-md border-green-100 bg-white shadow-sm">
-                                    <table class="min-w-full divide-y divide-green-100">
-                                        <thead class="bg-green-50">
-                                            <tr>${customerFinance.header.map(h => `<th class="px-2 py-1 text-left text-[10px] font-bold text-green-700">${h}</th>`).join('')}</tr>
-                                        </thead>
-                                        <tbody class="divide-y divide-green-50">
-                                            ${cust.customerFinance.map(cf => `
-                                            <tr>${cf.row.map(c => `<td class="px-2 py-1 text-[11px] text-gray-600 truncate max-w-[150px]">${escapeHtml(c)}</td>`).join('')}</tr>
-                                            ${cf.missingDocs.length > 0 ? `
-                                            <tr><td colspan="${customerFinance.header.length}" class="bg-red-50/30 px-4 py-2">
-                                                <div class="text-[10px] font-bold text-red-700 mb-1">Finance Missing Documents:</div>
-                                                <table class="w-full border border-red-100">
-                                                    <thead class="bg-red-50"><tr>${financeMissingDocs.header.map(h=>`<th class="px-1 py-0.5 text-[9px] text-red-600 text-left">${h}</th>`).join('')}</tr></thead>
-                                                    <tbody>${cf.missingDocs.map(r=>`<tr>${r.map(c=>`<td class="px-1 py-0.5 text-[9px] text-gray-500">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
-                                                </table>
-                                            </td></tr>` : ''}
-                                            `).join('')}
-                                        </tbody>
-                                    </table>
+                            <!-- CUSTOMER FINANCE SECTION -->
+                            ${cust.customerFinance.length > 0 ? (() => {
+                                // Filter Header once
+                                const filteredHeader = getFilteredTable(customerFinance.header, [], exclude.cf).header;
+                                return `
+                                <div class="ml-4 pl-4 border-l-2 border-green-200 mb-6">
+                                    <h3 class="text-sm font-bold text-green-800 mb-2 uppercase tracking-wide">Customer Finance</h3>
+                                    <div class="overflow-x-auto border rounded-md border-green-100 bg-white shadow-sm">
+                                        <table class="min-w-full divide-y divide-green-100">
+                                            <thead class="bg-green-50">
+                                                <tr>${filteredHeader.map(h => `<th class="px-2 py-1 text-left text-[10px] font-bold text-green-700">${h}</th>`).join('')}</tr>
+                                            </thead>
+                                            <tbody class="divide-y divide-green-50">
+                                                ${cust.customerFinance.map(cf => {
+                                                    // Filter Row
+                                                    const filteredRow = getFilteredTable(customerFinance.header, [cf.row], exclude.cf).rows[0];
+                                                    return `
+                                                    <tr>${filteredRow.map(c => `<td class="px-2 py-1 text-[11px] text-gray-600 truncate max-w-[150px]">${escapeHtml(c)}</td>`).join('')}</tr>
+                                                    ${cf.missingDocs.length > 0 ? `
+                                                    <tr><td colspan="${filteredHeader.length}" class="bg-red-50/30 px-4 py-2">
+                                                        <div class="text-[10px] font-bold text-red-700 mb-1">Finance Missing Documents:</div>
+                                                        <table class="w-full border border-red-100">
+                                                            <thead class="bg-red-50"><tr>${financeMissingDocs.header.map(h=>`<th class="px-1 py-0.5 text-[9px] text-red-600 text-left">${h}</th>`).join('')}</tr></thead>
+                                                            <tbody>${cf.missingDocs.map(r=>`<tr>${r.map(c=>`<td class="px-1 py-0.5 text-[9px] text-gray-500">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                        </table>
+                                                    </td></tr>` : '' }
+                                                    `;
+                                                }).join('')}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
-                            </div>
-                            ` : ''}
+                                `;
+                            })() : ''}
 
                             <div class="ml-4 pl-4 border-l-2 border-blue-200">
                                 <h3 class="text-sm font-bold text-blue-800 mb-2 uppercase tracking-wide">Projects (${cust.projects.length})</h3>
@@ -326,10 +332,13 @@ function generateHtmlReport(data) {
                                                                 </div>
                                                                 ${proj.projectFinance.length === 0 ? 
                                                                     '<div class="p-2 text-xs text-gray-400">No finance records</div>' : 
-                                                                    `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-indigo-50">
-                                                                        <thead class="bg-white"><tr>${projectFinance.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
-                                                                        <tbody class="divide-y divide-indigo-50">${proj.projectFinance.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
-                                                                     </table></div>`
+                                                                    (() => {
+                                                                        const filteredPF = getFilteredTable(projectFinance.header, proj.projectFinance, exclude.pf);
+                                                                        return `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-indigo-50">
+                                                                            <thead class="bg-white"><tr>${filteredPF.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
+                                                                            <tbody class="divide-y divide-indigo-50">${filteredPF.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                         </table></div>`;
+                                                                    })()
                                                                 }
                                                             </div>
 
@@ -339,10 +348,13 @@ function generateHtmlReport(data) {
                                                                     Project Payments ${proj.projectPayments.length ? `(${proj.projectPayments.length})` : ''}
                                                                 </div>
                                                                 ${proj.projectPayments.length > 0 ? 
-                                                                    `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-emerald-50">
-                                                                        <thead class="bg-white"><tr>${projectPayments.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
-                                                                        <tbody class="divide-y divide-emerald-50">${proj.projectPayments.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
-                                                                    </table></div>` : '<div class="p-2 text-xs text-gray-400">No payments</div>'
+                                                                    (() => {
+                                                                        const filteredPP = getFilteredTable(projectPayments.header, proj.projectPayments, exclude.pp);
+                                                                        return `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-emerald-50">
+                                                                            <thead class="bg-white"><tr>${filteredPP.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
+                                                                            <tbody class="divide-y divide-emerald-50">${filteredPP.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                        </table></div>`;
+                                                                    })() : '<div class="p-2 text-xs text-gray-400">No payments</div>'
                                                                 }
                                                             </div>
 

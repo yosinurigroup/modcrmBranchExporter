@@ -466,44 +466,166 @@ async function filterData(drive, sheets, customersData, branchName) {
         return { header: newHeader, rows: newRows };
     };
 
-    // --- PROCESS NOTES COLUMNS ---
+    // --- APPLY COLUMN FILTERS (Spreadsheet & HTML) ---
+
+    // 1. PROJECTS: Remove "Last Edit By", "Last Edit On"
+    //    We retain Project ID internally (usually first col) if it's not in remove list, 
+    //    but user only asked to remove these specific 2.
+    const projectsRemove = ["Last Edit By", "Last Edit On"];
+    const cleanProjects = filterColumns(pHeader, filteredProjects, projectsRemove);
+
+    // 2. CUSTOMER FINANCE: Remove customerFinanceID, Customer ID, ProjectID, Branch
+    const cfRemove = ["customerFinanceID", "Customer ID", "ProjectID", "Branch"];
+    const cleanCF = filterColumns(cfHeader, filteredCustomerFinance, cfRemove);
+
+    // 3. PROJECT FINANCE: Remove projectFinanceID, customerFinanceID
+    const pfRemove = ["projectFinanceID", "customerFinanceID"];
+    const cleanPF = filterColumns(pfHeader, filteredProjectFinance, pfRemove);
+
+    // 4. PROJECT PAYMENTS: Remove customerFinanceID, Record ID, Customer
+    const ppRemove = ["customerFinanceID", "Record ID", "Customer"];
+    const cleanPP = filterColumns(ppHeader, filteredProjectPayments, ppRemove);
+
+    // 5. CUSTOMERS: Remove specific columns
+    const custRemoveList = ["Customer ID", "Update", "Folder Id", "Last Edit By", "Last Edit On", "Favorit"];
+    const cleanCustomers = filterColumns(cHeader, filteredCustomers, custRemoveList);
+
+    // 6. NOTES (Special handling for HTML vs Sheet)
     const notesRemoveList = [
         "Note ID", "Note Type", "Priority", "ProjectId", "Ticket ID", 
         "Customer", "Department", "Reminder", "Remind to", "Notify on", 
         "Task Date", "Clear", "E2", "E3", "E4", "E5"
     ];
-    
-    // 1. For Spreadsheet: Remove ALL requested columns (including ProjectId)
+    // For Spreadsheet: Remove ALL
     const sheetNotes = filterColumns(notesHeader, filteredNotes, notesRemoveList);
+    // For HTML: Keep ProjectId for linking, remove others
+    const htmlNotesRemove = notesRemoveList.filter(c => c.toLowerCase() !== 'projectid');
+    const htmlNotes = filterColumns(notesHeader, filteredNotes, htmlNotesRemove);
 
-    // 2. For HTML: Keep "ProjectId" for linking, remove others
-    const htmlRemoveList = notesRemoveList.filter(c => c.toLowerCase() !== 'projectid');
-    const htmlNotes = filterColumns(notesHeader, filteredNotes, htmlRemoveList);
-
-    // --- PROCESS CUSTOMER COLUMNS ---
-    const custRemoveList = ["Customer ID", "Update", "Folder Id", "Last Edit By", "Last Edit On", "Favorit"];
-    const sheetCustomers = filterColumns(cHeader, filteredCustomers, custRemoveList);
-    // For HTML we actually use the full row internally but only render specific columns defined in htmlGenerator.
-    // However, if we want to be consistent, we can just pass the raw filteredCustomers to HTML generator
-    // and let it pick what it needs based on its header list, which we updated in htmlGenerator.js.
-    // But for the spreadsheet write, we want to use the filtered version.
-
-    console.log(`Filtered: MD=${filteredMissingDocs.length}, PF=${filteredProjectFinance.length}, PP=${filteredProjectPayments.length}, Permits=${filteredProjectsPermits.length}, Notes=${filteredNotes.length}, CF=${filteredCustomerFinance.length}, FMD=${filteredFinanceMissingDocs.length}`);
+    console.log(`Filtered: Projects=${cleanProjects.rows.length}, CF=${cleanCF.rows.length}, PF=${cleanPF.rows.length}, PP=${cleanPP.rows.length}, Notes=${filteredNotes.length}`);
 
     return { 
-        pHeader, filteredProjects, 
-        cHeader, filteredCustomers, 
+        // Return CLEANED versions for both Sheet and HTML
+        pHeader: cleanProjects.header, filteredProjects: cleanProjects.rows,
+        cHeader: cleanCustomers.header, filteredCustomers: cleanCustomers.rows,
+        
         mdHeader, filteredMissingDocs, 
-        pfHeader, filteredProjectFinance,
-        cfHeader, filteredCustomerFinance,
+        
+        pfHeader: cleanPF.header, filteredProjectFinance: cleanPF.rows,
+        
+        cfHeader: cleanCF.header, filteredCustomerFinance: cleanCF.rows,
+        
         fmdHeader, filteredFinanceMissingDocs,
-        ppHeader, filteredProjectPayments,
+        
+        ppHeader: cleanPP.header, filteredProjectPayments: cleanPP.rows,
+        
         permitsHeader, filteredProjectsPermits,
         
-        // Return distinct sets
+        // Notes handled separately
         sheetNotes,
         htmlNotes,
-        sheetCustomers
+
+        // Raw data retained if needed for linking logic that relies on IDs removed from view?
+        // Note: HTML generation might need IDs. If we strip IDs (like ProjectID from CF), linking might break.
+        // Let's check htmlGenerator logic.
+        // htmlGenerator uses "customerMap" built from `customers`. It uses `cust.id` (Column 0 usually).
+        // If we remove "Customer ID" from filteredCustomers, we might break linking if ID was in that column.
+        // However, standard "Customer ID" is column A.
+        // The user said "remove Customer ID... from spreadsheet and html view".
+        // BUT we need it for hierarchy. 
+        // Solution: We must pass raw data for logic, but clean data for display?
+        // Actually, for simplicity, let's pass the CLEAN data to writeSheet.
+        // For HTML generator, we might need the keys. 
+        // `generateHtmlReport` relies on indexes. If we remove columns, indexes shift.
+        // `generateHtmlReport` does key-based matching? No, it often uses predefined columns or indexes.
+        
+        // CHECK: htmlGenerator:
+        // const idIdx = customerHeader.indexOf('Customer ID');
+        // If we remove 'Customer ID', idIdx is -1, and logic breaks.
+        // WE MUST KEEP IDs in the data passed to `generateHtmlReport` OR `generateHtmlReport` must handle it.
+        // User asked to remove from "html view". 
+        // Best approach: Pass RAW data to `generateHtmlReport` but tell it to HIDE/IGNORE columns?
+        // OR: Update `generateHtmlReport` to handle missing ID column?
+        // It's safer to pass FULL data to `generateHtmlReport` and let IT decide what to render (which we updated in PROJECT_COLUMNS/CUSTOMER_COLUMNS).
+        // BUT for the "Customer Finance" and others which are dynamic, we need to care.
+        
+        // REVISED STRATEGY:
+        // 1. Return `sheetData` (cleaned) for writing to Sheets.
+        // 2. Return `htmlData` (cleaned or raw?)
+        //    - HTML generator uses `header` to find columns.
+        //    - If we remove ID columns from CF/PF/PP, we can't link them to Customers/Projects!
+        //    - Ex: Customer Finance needs `Customer ID` to link to Customer.
+        //    - Ex: Project Payments needs `Project ID` (was "Record ID" or "Project ID"?) to link.
+        
+        // SO: We CANNOT remove ID columns from the data passed to `generateHtmlReport` because it performs the linking.
+        // We must ONLY remove them from the Spreadsheet write and the HTML *Render*.
+        // The user said "remove ... from html view".
+        
+        // Okay, we will return:
+        // A) Sets for Sheets (Cleaned)
+        // B) Sets for HTML (Raw, but with "View" columns filtered effectively by logic? 
+        //    No, `generateHtmlReport` renders everything in the headers provided for child tables (CF, PP, PF).
+        //    So if we pass raw headers, it renders raw columns.
+        
+        // SOLUTION for Child Tables (CF, PF, PP):
+        // We need TWO versions: 
+        // 1. Raw (with IDs) for Linking.
+        // 2. Clean (without IDs) for Rendering.
+        
+        // Actually, `generateHtmlReport` takes `data`. 
+        // It builds hierarchy using Raw data.
+        // Then it renders. 
+        // We should pass Raw data to `generateHtmlReport`, but update `generateHtmlReport` to NOT render the ID columns.
+        // OR: We pass a `displayHeader` to `generateHtmlReport`.
+        
+        // Let's stick to the pattern we used for Notes:
+        // `htmlNotes` kept ProjectID but we hid it in rendering.
+        
+        // For CF, PF, PP:
+        // We will create `htmlCF`, `htmlPF`, `htmlPP` which:
+        // - KEEP the linking IDs (Customer ID, Project ID).
+        // - REMOVE the other unwanted columns.
+        // - And in `htmlGenerator`, we must ensure we don't render the linking IDs if requested to hide.
+        
+        // WAIT. User said "remove Customer ID... from Customer Finance".
+        // If we remove it from `cfHeader` passed to HTML, we can't link.
+        // So we must keep it in the data, but use a filtered header for display?
+        // `htmlGenerator` renders `data.customerFinance.header.map(...)`.
+        
+        // Let's create `html*` objects that have:
+        // `header`: The display header (minus hidden cols).
+        // `rows`: The rows (minus hidden cols? NO, rows must match header indices).
+        
+        // Converting rows to match new header means we LOSE the ID column, so we can't link!
+        // This is the Catch-22.
+        // We need the ID to build the tree.
+        
+        // PROPOSAL:
+        // 1. `processBranch` passes RAW data to `generateHtmlReport`.
+        // 2. `generateHtmlReport` builds the tree using RAW data (finding IDs by name).
+        // 3. `generateHtmlReport` THEN renders the tables using a FILTERED list of columns.
+        //    We can pass a "excludeColumns" map to `generateHtmlReport`.
+        
+        // This is cleanest. 
+        // So `filterData` returns:
+        // - `sheet*` (Fully cleaned for spreadsheet)
+        // - `raw*` (Original filtered data for HTML logic)
+        
+        // And we update `generateHtmlReport` to accept exclusion lists or we pre-calculate renderable subsets inside it.
+        // Let's go with returning `sheet*` sets for the writer, and keeping `filtered*` as raw for HTML.
+        // But wait, the user wants to remove columns from HTML *View*.
+        // So we need to tell HTML generator which columns to hide.
+        
+        rawProjects: { header: pHeader, rows: filteredProjects },
+        rawCustomers: { header: cHeader, filteredCustomers }, // etc
+        
+        // Return cleaned sets for spreadsheet
+        sheetProjects: cleanProjects,
+        sheetCustomers: cleanCustomers,
+        sheetCF: cleanCF,
+        sheetPF: cleanPF,
+        sheetPP: cleanPP,
+        sheetNotes: sheetNotes, // already defined
     };
 }
 
@@ -656,30 +778,25 @@ async function processBranch(params) {
         fmdHeader, filteredFinanceMissingDocs,
         ppHeader, filteredProjectPayments,
         permitsHeader, filteredProjectsPermits,
-        sheetNotes, htmlNotes, sheetCustomers // Destructure new objects
+        
+        // Cleaned sets for Spreadsheet
+        sheetProjects, sheetCustomers, sheetCF, sheetPF, sheetPP, sheetNotes,
+        
+        // HTML specific (notes)
+        htmlNotes 
     } = await filterData(drive, sheets, params.customersData, branchName);
     
-    await writeSheet(sheets, newSheetId, 'Projects', pHeader, filteredProjects);
-    
-    // Write Cleaned Customers to Sheet
-    if (sheetCustomers.header && sheetCustomers.header.length > 0) {
-        await writeSheet(sheets, newSheetId, 'Customers', sheetCustomers.header, sheetCustomers.rows);
-    } else {
-        // Fallback if needed, though we expect header
-        await writeSheet(sheets, newSheetId, 'Customers', cHeader, filteredCustomers);
-    }
+    // Write Cleaned Data to Spreadsheet
+    await writeSheet(sheets, newSheetId, 'Projects', sheetProjects.header, sheetProjects.rows);
+    await writeSheet(sheets, newSheetId, 'Customers', sheetCustomers.header, sheetCustomers.rows);
     
     if (mdHeader) await writeSheet(sheets, newSheetId, 'Missing Documents', mdHeader, filteredMissingDocs);
-    if (pfHeader) await writeSheet(sheets, newSheetId, 'Project Finance', pfHeader, filteredProjectFinance);
-    if (cfHeader) await writeSheet(sheets, newSheetId, 'Customer Finance', cfHeader, filteredCustomerFinance);
+    if (sheetPF) await writeSheet(sheets, newSheetId, 'Project Finance', sheetPF.header, sheetPF.rows);
+    if (sheetCF) await writeSheet(sheets, newSheetId, 'Customer Finance', sheetCF.header, sheetCF.rows);
     if (fmdHeader) await writeSheet(sheets, newSheetId, 'Finance Missing Documents', fmdHeader, filteredFinanceMissingDocs);
-    if (ppHeader) await writeSheet(sheets, newSheetId, 'Project Payments', ppHeader, filteredProjectPayments);
+    if (sheetPP) await writeSheet(sheets, newSheetId, 'Project Payments', sheetPP.header, sheetPP.rows);
     if (permitsHeader) await writeSheet(sheets, newSheetId, 'Projects Permits', permitsHeader, filteredProjectsPermits);
-    
-    // Write Cleaned Notes to Sheet
-    if (sheetNotes.header && sheetNotes.header.length > 0) {
-        await writeSheet(sheets, newSheetId, 'Notes', sheetNotes.header, sheetNotes.rows);
-    }
+    if (sheetNotes) await writeSheet(sheets, newSheetId, 'Notes', sheetNotes.header, sheetNotes.rows);
 
     // Remove default blank sheet
     await sheets.spreadsheets.batchUpdate({
