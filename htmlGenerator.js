@@ -265,7 +265,7 @@ function generateHtmlReport(data) {
                 <tr>
                     <th scope="col" class="w-8 px-2 py-2"></th> <!-- Expander -->
                     ${CUSTOMER_COLUMNS.map(col => `
-                        <th scope="col" class="px-2 py-2 text-left text-xs font-semibold text-gray-900 uppercase tracking-wider whitespace-nowrap border-r border-gray-200 last:border-0">
+                        <th scope="col" class="px-2 py-2 text-left text-[10px] font-semibold text-gray-900 capitalize border-r border-gray-200 last:border-0 align-bottom">
                             ${col}
                         </th>
                     `).join('')}
@@ -283,8 +283,8 @@ function generateHtmlReport(data) {
                             </svg>
                         </td>
                         ${custIndices.map(idx => `
-                            <td class="px-2 py-1 text-xs text-gray-700 whitespace-nowrap border-r border-gray-100 last:border-0">
-                                ${idx !== -1 ? escapeHtml(truncate(cust.row[idx])) : ''}
+                            <td class="px-2 py-1 text-xs text-gray-700 border-r border-gray-100 last:border-0 whitespace-normal break-words">
+                                ${idx !== -1 ? escapeHtml(cust.row[idx]) : ''}
                             </td>
                         `).join('')}
                     </tr>
@@ -304,20 +304,20 @@ function generateHtmlReport(data) {
                                     <div class="overflow-x-auto border rounded-md border-green-100 bg-white shadow-sm">
                                         <table class="min-w-full divide-y divide-green-100">
                                             <thead class="bg-green-50">
-                                                <tr>${filteredHeader.map(h => `<th class="px-2 py-1 text-left text-[10px] font-bold text-green-700">${h}</th>`).join('')}</tr>
+                                                <tr>${filteredHeader.map(h => `<th class="px-2 py-1 text-left text-[10px] font-bold text-green-700 capitalize align-bottom">${h}</th>`).join('')}</tr>
                                             </thead>
                                             <tbody class="divide-y divide-green-50">
                                                 ${cust.customerFinance.map(cf => {
                                                     // Filter Row
                                                     const filteredRow = getFilteredTable(customerFinance.header, [cf.row], exclude.cf).rows[0];
                                                     return `
-                                                    <tr>${filteredRow.map(c => `<td class="px-2 py-1 text-[11px] text-gray-600 truncate max-w-[150px]">${escapeHtml(c)}</td>`).join('')}</tr>
+                                                    <tr>${filteredRow.map(c => `<td class="px-2 py-1 text-[11px] text-gray-600 whitespace-normal break-words">${escapeHtml(c)}</td>`).join('')}</tr>
                                                     ${cf.missingDocs.length > 0 ? `
                                                     <tr><td colspan="${filteredHeader.length}" class="bg-red-50/30 px-4 py-2">
                                                         <div class="text-[10px] font-bold text-red-700 mb-1">Finance Missing Documents:</div>
                                                         <table class="w-full border border-red-100">
-                                                            <thead class="bg-red-50"><tr>${financeMissingDocs.header.map(h=>`<th class="px-1 py-0.5 text-[9px] text-red-600 text-left">${h}</th>`).join('')}</tr></thead>
-                                                            <tbody>${cf.missingDocs.map(r=>`<tr>${r.map(c=>`<td class="px-1 py-0.5 text-[9px] text-gray-500">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                            <thead class="bg-red-50"><tr>${financeMissingDocs.header.map(h=>`<th class="px-1 py-0.5 text-[9px] text-red-600 text-left capitalize align-bottom">${h}</th>`).join('')}</tr></thead>
+                                                            <tbody>${cf.missingDocs.map(r=>`<tr>${r.map(c=>`<td class="px-1 py-0.5 text-[9px] text-gray-500 whitespace-normal break-words">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
                                                         </table>
                                                     </td></tr>` : '' }
                                                     `;
@@ -340,7 +340,7 @@ function generateHtmlReport(data) {
                                             <tr>
                                                 <th class="w-6 px-2 py-1"></th>
                                                 ${PROJECT_COLUMNS.map(col => `
-                                                    <th class="px-2 py-1 text-left text-[10px] font-bold text-blue-700 uppercase tracking-wider whitespace-nowrap border-r border-blue-100">
+                                                    <th class="px-2 py-1 text-left text-[10px] font-bold text-blue-700 capitalize border-r border-blue-100 align-bottom">
                                                         ${col}
                                                     </th>
                                                 `).join('')}
@@ -357,8 +357,8 @@ function generateHtmlReport(data) {
                                                         </svg>
                                                     </td>
                                                     ${projIndices.map(idx => `
-                                                        <td class="px-2 py-1 text-gray-600 whitespace-nowrap border-r border-blue-50 last:border-0">
-                                                            ${idx !== -1 ? escapeHtml(truncate(proj.row[idx])) : ''}
+                                                        <td class="px-2 py-1 text-gray-600 border-r border-blue-50 last:border-0 whitespace-normal break-words">
+                                                            ${idx !== -1 ? escapeHtml(proj.row[idx]) : ''}
                                                         </td>
                                                     `).join('')}
                                                 </tr>
@@ -376,8 +376,8 @@ function generateHtmlReport(data) {
                                                                 ${proj.missingDocs.length === 0 ? 
                                                                     '<div class="p-2 text-xs text-green-600 flex items-center gap-1">✔ All good</div>' : 
                                                                     `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-red-50">
-                                                                        <thead class="bg-white"><tr>${missingDocs.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
-                                                                        <tbody class="divide-y divide-red-50">${proj.missingDocs.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                        <thead class="bg-white"><tr>${missingDocs.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500 capitalize align-bottom">${h}</th>`).join('')}</tr></thead>
+                                                                        <tbody class="divide-y divide-red-50">${proj.missingDocs.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 whitespace-normal break-words">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
                                                                     </table></div>`
                                                                 }
                                                             </div>
@@ -392,8 +392,8 @@ function generateHtmlReport(data) {
                                                                     (() => {
                                                                         const filteredPF = getFilteredTable(projectFinance.header, proj.projectFinance, exclude.pf);
                                                                         return `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-indigo-50">
-                                                                            <thead class="bg-white"><tr>${filteredPF.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
-                                                                            <tbody class="divide-y divide-indigo-50">${filteredPF.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                            <thead class="bg-white"><tr>${filteredPF.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500 capitalize align-bottom">${h}</th>`).join('')}</tr></thead>
+                                                                            <tbody class="divide-y divide-indigo-50">${filteredPF.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 whitespace-normal break-words">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
                                                                          </table></div>`;
                                                                     })()
                                                                 }
@@ -408,8 +408,8 @@ function generateHtmlReport(data) {
                                                                     (() => {
                                                                         const filteredPP = getFilteredTable(projectPayments.header, proj.projectPayments, exclude.pp);
                                                                         return `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-emerald-50">
-                                                                            <thead class="bg-white"><tr>${filteredPP.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
-                                                                            <tbody class="divide-y divide-emerald-50">${filteredPP.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                            <thead class="bg-white"><tr>${filteredPP.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500 capitalize align-bottom">${h}</th>`).join('')}</tr></thead>
+                                                                            <tbody class="divide-y divide-emerald-50">${filteredPP.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 whitespace-normal break-words">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
                                                                         </table></div>`;
                                                                     })() : '<div class="p-2 text-xs text-gray-400">No payments</div>'
                                                                 }
@@ -424,8 +424,8 @@ function generateHtmlReport(data) {
                                                                     (() => {
                                                                         const filteredPermits = getFilteredTable(projectsPermits.header, proj.projectsPermits, []);
                                                                         return `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-yellow-50">
-                                                                            <thead class="bg-white"><tr>${filteredPermits.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
-                                                                            <tbody class="divide-y divide-yellow-50">${filteredPermits.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                            <thead class="bg-white"><tr>${filteredPermits.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500 capitalize align-bottom">${h}</th>`).join('')}</tr></thead>
+                                                                            <tbody class="divide-y divide-yellow-50">${filteredPermits.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 whitespace-normal break-words">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
                                                                         </table></div>`;
                                                                     })() : '<div class="p-2 text-xs text-gray-400">No permits found</div>'
                                                                 }
@@ -455,8 +455,8 @@ function generateHtmlReport(data) {
                                                                          const filteredProd = getIncludedTable(projectProduction.header, proj.projectProduction, PROJ_PROD_DISPLAY);
                                                                          
                                                                          return `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-orange-50">
-                                                                             <thead class="bg-white"><tr>${filteredProd.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
-                                                                             <tbody class="divide-y divide-orange-50">${filteredProd.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                             <thead class="bg-white"><tr>${filteredProd.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500 capitalize align-bottom">${h}</th>`).join('')}</tr></thead>
+                                                                             <tbody class="divide-y divide-orange-50">${filteredProd.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 whitespace-normal break-words">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
                                                                          </table></div>`;
                                                                      })() : '<div class="p-2 text-xs text-gray-400">No production records</div>'
                                                                  }
@@ -473,14 +473,14 @@ function generateHtmlReport(data) {
                                                                             <tr>${notes.header.map((h, i) => {
                                                                                 // Skip rendering ProjectId column in HTML View as requested per "remove in html"
                                                                                 if (i === notesPIdIdx) return '';
-                                                                                return `<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`;
+                                                                                return `<th class="px-2 py-1 text-[10px] text-left text-gray-500 capitalize align-bottom">${h}</th>`;
                                                                             }).join('')}</tr>
                                                                         </thead>
                                                                         <tbody class="divide-y divide-yellow-50">
                                                                             ${proj.notes.map(r => `<tr>${r.map((c, i) => {
                                                                                 if (i === notesPIdIdx) return '';
                                                                                 // Modified styling: min-w for compactness but whitespace-normal for wrapping
-                                                                                return `<td class="px-2 py-1 text-[10px] text-gray-600 min-w-[80px] max-w-[200px] whitespace-normal break-words leading-tight">${escapeHtml(c)}</td>`;
+                                                                                return `<td class="px-2 py-1 text-[10px] text-gray-600 whitespace-normal break-words">${escapeHtml(c)}</td>`;
                                                                             }).join('')}</tr>`).join('')}
                                                                         </tbody>
                                                                     </table></div>` : '<div class="p-2 text-xs text-gray-400">No notes</div>'
