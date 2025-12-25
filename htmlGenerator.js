@@ -140,7 +140,15 @@ function generateHtmlReport(data) {
     const pfPIdIdx = 2; // From index.js
     const ppPIdIdx = 3; // From index.js
     const permitsPIdIdx = 1; // From index.js
-    const notesPIdIdx = 3; // From index.js
+    
+    // Notes: Dynamic lookup because columns shift
+    let notesPIdIdx = -1;
+    if (notes.header) {
+        notesPIdIdx = notes.header.findIndex(h => {
+             const clean = h ? h.toString().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+             return clean === 'projectid' || clean === 'project_id' || clean === 'project id';
+        });
+    }
 
     const linkToProject = (rows, pidIndex, targetArrayName) => {
         if (!rows) return;
@@ -358,8 +366,19 @@ function generateHtmlReport(data) {
                                                                 </div>
                                                                 ${proj.notes.length > 0 ? 
                                                                     `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-yellow-50">
-                                                                        <thead class="bg-white"><tr>${notes.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
-                                                                        <tbody class="divide-y divide-yellow-50">${proj.notes.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[300px] whitespace-normal">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                        <thead class="bg-white">
+                                                                            <tr>${notes.header.map((h, i) => {
+                                                                                // Skip rendering ProjectId column in HTML View as requested per "remove in html"
+                                                                                if (i === notesPIdIdx) return '';
+                                                                                return `<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`;
+                                                                            }).join('')}</tr>
+                                                                        </thead>
+                                                                        <tbody class="divide-y divide-yellow-50">
+                                                                            ${proj.notes.map(r => `<tr>${r.map((c, i) => {
+                                                                                if (i === notesPIdIdx) return '';
+                                                                                return `<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[300px] whitespace-normal">${escapeHtml(c)}</td>`;
+                                                                            }).join('')}</tr>`).join('')}
+                                                                        </tbody>
                                                                     </table></div>` : '<div class="p-2 text-xs text-gray-400">No notes</div>'
                                                                 }
                                                             </div>

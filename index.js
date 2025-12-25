@@ -436,10 +436,6 @@ async function filterData(drive, sheets, customersData, branchName) {
     }
 
     // 7. Finance Missing Documents (match customerFinanceID in Column C -> index 2)
-    // We need to match against ID from Customer Finance. Assuming Customer Finance ID is in Column A -> index 0 (?)
-    // If not specified, we usually assume ID is first column. Let's look for "Finance ID" or "ID" in cfHeader.
-    // However, common pattern is ID in Col A. Let's assume Col A (index 0) of filteredCustomerFinance is the ID.
-    // User said: "Finance Missing Documents (where customerFinanceID match in column C)" matches "customerFinanceID"
     let validCustFinIds = [];
     if (filteredCustomerFinance.length > 0) {
         // Assuming the detailed ID is in the first column (index 0) of Customer Finance
@@ -449,6 +445,40 @@ async function filterData(drive, sheets, customersData, branchName) {
     if (fmdRows.length > 1 && validCustFinIds.length > 0) {
         filteredFinanceMissingDocs = fmdRows.slice(1).filter(row => validCustFinIds.includes(row[2]));
     }
+
+    // --- HELPER: Filter Columns ---
+    const filterColumns = (header, rows, removeList) => {
+        if (!header) return { header: [], rows: [] };
+        const removeSet = new Set(removeList.map(h => h.toLowerCase()));
+        
+        // Identify indices to keep
+        const indicesToKeep = [];
+        const newHeader = [];
+        header.forEach((h, i) => {
+            const hClean = h ? h.toString().trim() : '';
+            if (!removeSet.has(hClean.toLowerCase())) {
+                indicesToKeep.push(i);
+                newHeader.push(hClean);
+            }
+        });
+
+        const newRows = rows.map(r => indicesToKeep.map(i => r[i]));
+        return { header: newHeader, rows: newRows };
+    };
+
+    // --- PROCESS NOTES COLUMNS ---
+    const notesRemoveList = [
+        "Note ID", "Note Type", "Priority", "ProjectId", "Ticket ID", 
+        "Customer", "Department", "Reminder", "Remind to", "Notify on", 
+        "Task Date", "Clear", "E2", "E3", "E4", "E5"
+    ];
+    
+    // 1. For Spreadsheet: Remove ALL requested columns (including ProjectId)
+    const sheetNotes = filterColumns(notesHeader, filteredNotes, notesRemoveList);
+
+    // 2. For HTML: Keep "ProjectId" for linking, remove others
+    const htmlRemoveList = notesRemoveList.filter(c => c.toLowerCase() !== 'projectid');
+    const htmlNotes = filterColumns(notesHeader, filteredNotes, htmlRemoveList);
 
     console.log(`Filtered: MD=${filteredMissingDocs.length}, PF=${filteredProjectFinance.length}, PP=${filteredProjectPayments.length}, Permits=${filteredProjectsPermits.length}, Notes=${filteredNotes.length}, CF=${filteredCustomerFinance.length}, FMD=${filteredFinanceMissingDocs.length}`);
 
@@ -461,7 +491,10 @@ async function filterData(drive, sheets, customersData, branchName) {
         fmdHeader, filteredFinanceMissingDocs,
         ppHeader, filteredProjectPayments,
         permitsHeader, filteredProjectsPermits,
-        notesHeader, filteredNotes
+        
+        // Return distinct sets for Notes
+        sheetNotes,
+        htmlNotes
     };
 }
 
@@ -607,7 +640,7 @@ async function processBranch(params) {
         fmdHeader, filteredFinanceMissingDocs,
         ppHeader, filteredProjectPayments,
         permitsHeader, filteredProjectsPermits,
-        notesHeader, filteredNotes
+        sheetNotes, htmlNotes // Destructure new objects
     } = await filterData(drive, sheets, params.customersData, branchName);
     
     await writeSheet(sheets, newSheetId, 'Projects', pHeader, filteredProjects);
@@ -619,7 +652,11 @@ async function processBranch(params) {
     if (fmdHeader) await writeSheet(sheets, newSheetId, 'Finance Missing Documents', fmdHeader, filteredFinanceMissingDocs);
     if (ppHeader) await writeSheet(sheets, newSheetId, 'Project Payments', ppHeader, filteredProjectPayments);
     if (permitsHeader) await writeSheet(sheets, newSheetId, 'Projects Permits', permitsHeader, filteredProjectsPermits);
-    if (notesHeader) await writeSheet(sheets, newSheetId, 'Notes', notesHeader, filteredNotes);
+    
+    // Write Cleaned Notes to Sheet
+    if (sheetNotes.header && sheetNotes.header.length > 0) {
+        await writeSheet(sheets, newSheetId, 'Notes', sheetNotes.header, sheetNotes.rows);
+    }
 
     // Remove default blank sheet
     await sheets.spreadsheets.batchUpdate({
@@ -765,7 +802,7 @@ async function processBranch(params) {
         financeMissingDocs: { header: fmdHeader, rows: filteredFinanceMissingDocs },
         projectPayments: { header: ppHeader, rows: filteredProjectPayments },
         projectsPermits: { header: permitsHeader, rows: filteredProjectsPermits },
-        notes: { header: notesHeader, rows: filteredNotes },
+        notes: { header: htmlNotes.header, rows: htmlNotes.rows }, // Use HTML specific notes (with PID)
         branchName
     });
 
