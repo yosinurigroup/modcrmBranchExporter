@@ -755,6 +755,8 @@ async function processBranch(params) {
         ppHeader, filteredProjectPayments,
         permitsHeader, filteredProjectsPermits,
         prodHeader, filteredProjectProduction,
+        vendorsHeader, filteredVendors,
+        vendorInvoicesHeader, filteredVendorInvoices,
         
         // Cleaned sets for Spreadsheet
         sheetProjects, sheetCustomers, sheetCF, sheetPF, sheetPP, sheetProd, sheetNotes,
@@ -774,6 +776,8 @@ async function processBranch(params) {
     if (sheetPP) await writeSheet(sheets, newSheetId, 'Project Payments', sheetPP.header, sheetPP.rows);
     if (permitsHeader) await writeSheet(sheets, newSheetId, 'Projects Permits', permitsHeader, filteredProjectsPermits);
     if (sheetProd) await writeSheet(sheets, newSheetId, 'Project Production', sheetProd.header, sheetProd.rows);
+    if (vendorsHeader) await writeSheet(sheets, newSheetId, 'Vendors', vendorsHeader, filteredVendors);
+    if (vendorInvoicesHeader) await writeSheet(sheets, newSheetId, 'Vendor Invoices', vendorInvoicesHeader, filteredVendorInvoices);
     if (sheetNotes) await writeSheet(sheets, newSheetId, 'Notes', sheetNotes.header, sheetNotes.rows);
 
     // Remove default blank sheet
@@ -796,6 +800,8 @@ async function processBranch(params) {
         projectPayments: { header: ppHeader, rows: filteredProjectPayments },
         projectsPermits: { header: permitsHeader, rows: filteredProjectsPermits },
         projectProduction: { header: prodHeader, rows: filteredProjectProduction },
+        vendors: { header: vendorsHeader, rows: filteredVendors },
+        vendorInvoices: { header: vendorInvoicesHeader, rows: filteredVendorInvoices },
         notes: { header: htmlNotes.header, rows: htmlNotes.rows },
         branchName
     });
