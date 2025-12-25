@@ -239,7 +239,7 @@ function generateHtmlReport(data) {
                                                 <!-- DETAILS: FINANCE & DOCS (Hidden) -->
                                                 <tr id="${projRowId}" class="hidden bg-white">
                                                     <td colspan="${PROJECT_COLUMNS.length + 1}" class="px-4 py-3">
-                                                        <div class="grid md:grid-cols-2 gap-4">
+                                                        <div class="flex flex-col gap-4">
                                                         
                                                             <!-- MISSING DOCS -->
                                                             <div class="border rounded border-red-100">
