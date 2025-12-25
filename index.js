@@ -805,7 +805,12 @@ async function processBranch(params) {
                 try {
                     // Search in Source Folder
                     const q = `'${VENDOR_INVOICES_SOURCE_FOLDER_ID}' in parents and name = '${filename}' and trashed = false`;
-                    const res = await drive.files.list({ q, fields: 'files(id, name, webViewLink)' });
+                    const res = await drive.files.list({ 
+                        q, 
+                        fields: 'files(id, name, webViewLink)',
+                        supportsAllDrives: true,
+                        includeItemsFromAllDrives: true
+                    });
                     
                     if (res.data.files.length > 0) {
                         const sourceFile = res.data.files[0];
@@ -818,7 +823,7 @@ async function processBranch(params) {
                         let finalLink = '';
                         if (existRes.data.files.length > 0) {
                            // Exists
-                           console.log(`Skipping existing invoice: ${filename}`);
+                           // console.log(`Skipping existing invoice: ${filename}`);
                            finalLink = existRes.data.files[0].webViewLink;
                         } else {
                            // Copy
@@ -826,7 +831,8 @@ async function processBranch(params) {
                            const copyRes = await drive.files.copy({
                                fileId: sourceFile.id,
                                requestBody: { parents: [invoicesFolderId] },
-                               fields: 'id, webViewLink'
+                               fields: 'id, webViewLink',
+                               supportsAllDrives: true
                            });
                            finalLink = copyRes.data.webViewLink;
                         }
