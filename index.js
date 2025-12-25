@@ -11,8 +11,12 @@ const TOKEN_PATH = 'token.json';
 // ====== CONSTANTS FROM YOUR APPS SCRIPT ======
 const PARENT_FOLDER_ID = '14FpsVpcVHyElklst8spOSVmftqch-9eo';
 const SOURCE_SHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s'; // contains Projects and Customers data
-const PERMITS_SHEET_ID = '1GUfwe_bSuZuVdh-fqrVO4uiX7NJVUYh_wKOXA7L_Bks';
-const NOTES_SHEET_ID = '1pLBJ0Trr6N3ZmN-FuARRfA9oXj04L_Q2RMOxuEnYbfI';
+const PERMITS_SHEET_ID = '1v0mR581oYZyCjoO-yYHDtHFXLC6OXCmVVz1UETL91lc'; // Projects Permits (Source)
+const NOTES_SHEET_ID = '1sM4gq9rq0OopT9Kda2k26q_LCsCPl7ox6w2Fz9IZ0hU'; // Notes (Source)
+const PROJECT_PRODUCTION_SHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s'; // Project Production (Source)
+
+const CUSTOMER_FINANCE_SHEET_ID = '1FpE891a27W173u45o6N4u9-2X54e_2W_Crr0QOqj7Wc'; // Customer Finance (Source)
+const FINANCE_MISSING_DOCS_SHEET_ID = '1v-7yK9d3D4gM3OXtHj65oKyTjH9hP1jQW-T0u3q6G5o'; // Finance Missing Documents (Source)
 const LOG_SPREADSHEET_ID = '1M8UpKngr2J24pQ9VmC7pY6PSK_7sXBx4rhNTvCXuS1s';
 const APP_ID = 'fea7f1b0-d312-4ae4-a923-aeea438d9ea0';
 const ACCESS_KEY = 'V2-ISEP6-P7hiF-OU44l-dWLZH-YYHPd-3fFox-IXJc0-wrnkJ';
@@ -307,74 +311,52 @@ async function appendLog(sheets, branchId, sheetLink, folderLink, statusCode, re
 
 // ====== DATA FILTERING ======
 async function filterData(drive, sheets, customersData, branchName) {
-    // Load Projects and Customers data from SOURCE_SHEET_ID
-    const projectsRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Projects!A1:Z' });
-    const customersRes = await sheets.spreadsheets.values.get({ spreadsheetId: SOURCE_SHEET_ID, range: 'Customers!A1:Z' });
-
-    // Load additional sheets: Missing Documents and Project Finance
-    // PLUS: Customer Finance, Finance Missing Documents, Project Payments
-    let missingDocsRes, projectFinanceRes, customerFinanceRes, finMissingDocsRes, projPaymentsRes;
-    
-    // External Sheets
-    let permitsRes, notesRes;
-
+    // Helper to fetch sheet data
     const fetchSheet = async (id, range) => {
         try {
-            return await sheets.spreadsheets.values.get({ spreadsheetId: id, range });
+            const res = await sheets.spreadsheets.values.get({ spreadsheetId: id, range });
+            const values = res.data.values || [];
+            return { header: values.length > 0 ? values[0] : [], rows: values.length > 1 ? values.slice(1) : [] };
         } catch (e) {
-            console.log(`Note: Sheet ${range} not found or empty in ${id}`);
-            return { data: { values: [] } };
+            console.log(`Note: Sheet ${range} not found or empty in ${id}. Error: ${e.message}`);
+            return { header: [], rows: [] };
         }
     };
 
-    missingDocsRes = await fetchSheet(SOURCE_SHEET_ID, 'Missing Documents!A1:Z');
-    projectFinanceRes = await fetchSheet(SOURCE_SHEET_ID, 'Project Finance!A1:Z');
-    customerFinanceRes = await fetchSheet(SOURCE_SHEET_ID, 'Customer Finance!A1:Z');
-    finMissingDocsRes = await fetchSheet(SOURCE_SHEET_ID, 'Finance Missing Documents!A1:Z');
-    projPaymentsRes = await fetchSheet(SOURCE_SHEET_ID, 'Project Payments!A1:Z');
-    
-    permitsRes = await fetchSheet(PERMITS_SHEET_ID, 'Projects Permits!A1:Z');
-    notesRes = await fetchSheet(NOTES_SHEET_ID, 'Notes!A1:Z');
+    // 1. Fetch all raw data
+    const projectsRaw = await fetchSheet(SOURCE_SHEET_ID, 'Projects!A1:Z');
+    const customersRaw = await fetchSheet(SOURCE_SHEET_ID, 'Customers!A1:Z');
+    const mdRaw = await fetchSheet(SOURCE_SHEET_ID, 'Missing Documents!A1:Z');
+    const pfRaw = await fetchSheet(SOURCE_SHEET_ID, 'Project Finance!A1:Z');
+    const ppRaw = await fetchSheet(SOURCE_SHEET_ID, 'Project Payments!A1:Z');
+    const permitsRaw = await fetchSheet(PERMITS_SHEET_ID, 'Projects Permits!A1:Z');
+    const notesRaw = await fetchSheet(NOTES_SHEET_ID, 'Notes!A1:Z');
+    const prodRaw = await fetchSheet(PROJECT_PRODUCTION_SHEET_ID, 'Project Production!A1:Z');
+    const cfRaw = await fetchSheet(CUSTOMER_FINANCE_SHEET_ID, 'Customer Finance!A1:Z');
+    const fmdRaw = await fetchSheet(FINANCE_MISSING_DOCS_SHEET_ID, 'Finance Missing Documents!A1:Z');
 
-    const pRows = projectsRes.data.values || [];
-    const cRows = customersRes.data.values || [];
-    const mdRows = missingDocsRes.data.values || [];
-    const pfRows = projectFinanceRes.data.values || [];
-    const cfRows = customerFinanceRes.data.values || [];
-    const fmdRows = finMissingDocsRes.data.values || [];
-    const ppRows = projPaymentsRes.data.values || [];
-    const permitsRows = permitsRes.data.values || [];
-    const notesRows = notesRes.data.values || [];
-
-    const pHeader = pRows[0];
-    const cHeader = cRows[0];
-    const mdHeader = mdRows[0];
-    const pfHeader = pfRows[0];
-    const cfHeader = cfRows[0];
-    const fmdHeader = fmdRows[0];
-    const ppHeader = ppRows[0];
-    const permitsHeader = permitsRows[0];
-    const notesHeader = notesRows[0];
+    const pHeader = projectsRaw.header;
+    const cHeader = customersRaw.header;
 
     // Extract customer IDs from the payload
     const customerIds = customersData.map(c => c.customerId);
     console.log('Filtering for customer IDs:', customerIds);
     console.log('Filtering for branch name:', branchName);
 
-    // Find the Customer ID and Branch Name column indices
+    // Find the Customer ID and Branch Name column indices in Projects
     const pCustomerIdCol = pHeader.findIndex(h => h && (h.toLowerCase().includes('customer') || h.toLowerCase().includes('cid')));
     const pBranchNameCol = pHeader.findIndex(h => h && h.toLowerCase().includes('branch'));
     const cCustomerIdCol = cHeader.findIndex(h => h && (h.toLowerCase().includes('customer') || h.toLowerCase().includes('cid')));
 
     // Filter Projects: only rows where customer ID matches AND branch name matches
-    const filteredProjects = pRows.slice(1).filter(row => {
+    const filteredProjects = projectsRaw.rows.filter(row => {
         const rowCustomerId = row[pCustomerIdCol];
         const rowBranchName = row[pBranchNameCol];
         return customerIds.includes(rowCustomerId) && rowBranchName === branchName;
     });
 
     // Filter Customers: only rows where customer ID matches
-    const filteredCustomers = cRows.slice(1).filter(row => {
+    const filteredCustomers = customersRaw.rows.filter(row => {
         const rowCustomerId = row[cCustomerIdCol];
         return customerIds.includes(rowCustomerId);
     });
@@ -400,50 +382,59 @@ async function filterData(drive, sheets, customersData, branchName) {
         console.log(`Found ${validProjectIds.length} valid project IDs for filtering additional sheets.`);
 
         // 1. Missing Documents (Column B -> index 1)
-        if (mdRows.length > 1) {
-            filteredMissingDocs = mdRows.slice(1).filter(row => validProjectIds.includes(row[1]));
+        if (mdRaw.rows.length > 0) {
+            filteredMissingDocs = mdRaw.rows.filter(row => validProjectIds.includes(row[1]));
         }
 
         // 2. Project Finance (Column C -> index 2)
-        if (pfRows.length > 1) {
-            filteredProjectFinance = pfRows.slice(1).filter(row => validProjectIds.includes(row[2]));
+        if (pfRaw.rows.length > 0) {
+            filteredProjectFinance = pfRaw.rows.filter(row => validProjectIds.includes(row[2]));
         }
 
         // 3. Project Payments (Column D -> index 3)
-        if (ppRows.length > 1) {
-            filteredProjectPayments = ppRows.slice(1).filter(row => validProjectIds.includes(row[3]));
+        if (ppRaw.rows.length > 0) {
+            filteredProjectPayments = ppRaw.rows.filter(row => validProjectIds.includes(row[3]));
         }
 
         // 4. Projects Permits (Column B -> index 1)
-        if (permitsRows.length > 1) {
-            filteredProjectsPermits = permitsRows.slice(1).filter(row => validProjectIds.includes(row[1]));
+        if (permitsRaw.rows.length > 0) {
+            filteredProjectsPermits = permitsRaw.rows.filter(row => validProjectIds.includes(row[1]));
         }
 
         // 5. Notes (Column D -> index 3)
-        if (notesRows.length > 1) {
-            filteredNotes = notesRows.slice(1).filter(row => validProjectIds.includes(row[3]));
+        if (notesRaw.rows.length > 0) {
+            filteredNotes = notesRaw.rows.filter(row => validProjectIds.includes(row[3]));
+        }
+        
+        // 6. Project Production
+        // We need to find the Project ID column index dynamically or assume standard
+        // User didn't specify, but usually Project ID is standard.
+        // Let's retry looking for it in header
+        const prodPIdIdx = prodRaw.header ? prodRaw.header.findIndex(h => h && (h.toLowerCase().includes('project id') || h.toLowerCase() === 'pid')) : -1;
+        if (prodRaw.rows.length > 0 && prodPIdIdx !== -1) {
+             filteredProjectProduction = prodRaw.rows.filter(row => validProjectIds.includes(row[prodPIdIdx]));
         }
     }
 
     // Filter Customer-related tables
-    // 6. Customer Finance (Customer ID in Column B -> index 1, Branch in Column D -> index 3)
-    if (cfRows.length > 1) {
-        filteredCustomerFinance = cfRows.slice(1).filter(row => {
+    // 7. Customer Finance (Customer ID in Column B -> index 1, Branch in Column D -> index 3)
+    if (cfRaw.rows.length > 0) {
+        filteredCustomerFinance = cfRaw.rows.filter(row => {
             const cId = row[1];
             const branch = row[3];
             return customerIds.includes(cId) && branch === branchName;
         });
     }
 
-    // 7. Finance Missing Documents (match customerFinanceID in Column C -> index 2)
+    // 8. Finance Missing Documents (match customerFinanceID in Column C -> index 2)
     let validCustFinIds = [];
     if (filteredCustomerFinance.length > 0) {
         // Assuming the detailed ID is in the first column (index 0) of Customer Finance
         validCustFinIds = filteredCustomerFinance.map(row => row[0]).filter(id => id);
     }
 
-    if (fmdRows.length > 1 && validCustFinIds.length > 0) {
-        filteredFinanceMissingDocs = fmdRows.slice(1).filter(row => validCustFinIds.includes(row[2]));
+    if (fmdRaw.rows.length > 0 && validCustFinIds.length > 0) {
+        filteredFinanceMissingDocs = fmdRaw.rows.filter(row => validCustFinIds.includes(row[2]));
     }
 
     // --- HELPER: Filter Columns ---
@@ -476,15 +467,15 @@ async function filterData(drive, sheets, customersData, branchName) {
 
     // 2. CUSTOMER FINANCE: Remove customerFinanceID, Customer ID, ProjectID, Branch
     const cfRemove = ["customerFinanceID", "Customer ID", "ProjectID", "Branch"];
-    const cleanCF = filterColumns(cfHeader, filteredCustomerFinance, cfRemove);
+    const cleanCF = filterColumns(cfRaw.header, filteredCustomerFinance, cfRemove);
 
     // 3. PROJECT FINANCE: Remove projectFinanceID, customerFinanceID
     const pfRemove = ["projectFinanceID", "customerFinanceID"];
-    const cleanPF = filterColumns(pfHeader, filteredProjectFinance, pfRemove);
+    const cleanPF = filterColumns(pfRaw.header, filteredProjectFinance, pfRemove);
 
     // 4. PROJECT PAYMENTS: Remove customerFinanceID, Record ID, Customer
     const ppRemove = ["customerFinanceID", "Record ID", "Customer"];
-    const cleanPP = filterColumns(ppHeader, filteredProjectPayments, ppRemove);
+    const cleanPP = filterColumns(ppRaw.header, filteredProjectPayments, ppRemove);
 
     // 5. CUSTOMERS: Remove specific columns
     const custRemoveList = ["Customer ID", "Update", "Folder Id", "Last Edit By", "Last Edit On", "Favorit"];
@@ -497,29 +488,61 @@ async function filterData(drive, sheets, customersData, branchName) {
         "Task Date", "Clear", "E2", "E3", "E4", "E5"
     ];
     // For Spreadsheet: Remove ALL
-    const sheetNotes = filterColumns(notesHeader, filteredNotes, notesRemoveList);
+    const sheetNotes = filterColumns(notesRaw.header, filteredNotes, notesRemoveList);
     // For HTML: Keep ProjectId for linking, remove others
     const htmlNotesRemove = notesRemoveList.filter(c => c.toLowerCase() !== 'projectid');
-    const htmlNotes = filterColumns(notesHeader, filteredNotes, htmlNotesRemove);
+    const htmlNotes = filterColumns(notesRaw.header, filteredNotes, htmlNotesRemove);
 
-    console.log(`Filtered: Projects=${cleanProjects.rows.length}, CF=${cleanCF.rows.length}, PF=${cleanPF.rows.length}, PP=${cleanPP.rows.length}, Notes=${filteredNotes.length}`);
+    // List of columns to keep for Project Production
+    const PROJ_PROD_KEEP = [
+        "Job Status", "Vendor", "Equipment Name", "Brand", 
+        "Qty", "Watt", "KW", "Permit", 
+        "Distance (ft)", "SSA", "Completion", "Final"
+    ]; // Note: We do NOT include Project ID in the "Keep" list for the cleaned sheet? 
+    // The user said "with following columns only". Typically this means ONLY these. 
+    // But if we remove Project ID from the Sheet, they can't link it back manually? 
+    // The previous requests removed IDs. So we will REMOVE Project ID from the cleaned sheet.
+    
+    // Helper to Keep ONLY specified columns
+    const keepColumns = (header, rows, columnsToKeep) => {
+        if (!header || !rows) return { header: [], rows: [] };
+        const indices = [];
+        const newHeader = [];
+        
+        columnsToKeep.forEach(colName => {
+            const idx = header.findIndex(h => h && h.trim().toLowerCase() === colName.toLowerCase());
+            if (idx !== -1) {
+                indices.push(idx);
+                newHeader.push(header[idx]);
+            }
+        });
+        
+        const newRows = rows.map(r => indices.map(i => r[i]));
+        return { header: newHeader, rows: newRows };
+    };
+
+    const sheetProd = keepColumns(prodRaw.header, filteredProjectProduction, PROJ_PROD_KEEP);
+
+    console.log(`Filtered: Projects=${cleanProjects.rows.length}, CF=${cleanCF.rows.length}, PF=${cleanPF.rows.length}, PP=${cleanPP.rows.length}, Notes=${filteredNotes.length}, Prod=${sheetProd.rows.length}`);
 
     return { 
         // Return RAW versions for HTML Generator (preserves IDs and indices for linking)
         pHeader, filteredProjects, 
         cHeader, filteredCustomers, 
         
-        mdHeader, filteredMissingDocs, 
+        mdHeader: mdRaw.header, filteredMissingDocs, 
         
-        pfHeader, filteredProjectFinance,
+        pfHeader: pfRaw.header, filteredProjectFinance,
         
-        cfHeader, filteredCustomerFinance,
+        cfHeader: cfRaw.header, filteredCustomerFinance,
         
-        fmdHeader, filteredFinanceMissingDocs,
+        fmdHeader: fmdRaw.header, filteredFinanceMissingDocs,
         
-        ppHeader, filteredProjectPayments,
+        ppHeader: ppRaw.header, filteredProjectPayments,
         
-        permitsHeader, filteredProjectsPermits,
+        permitsHeader: permitsRaw.header, filteredProjectsPermits,
+        
+        prodHeader: prodRaw.header, filteredProjectProduction, // RAW data with IDs for HTML linking
         
         // Return CLEANED versions for Spreadsheet Writer
         sheetProjects: cleanProjects,
@@ -527,6 +550,7 @@ async function filterData(drive, sheets, customersData, branchName) {
         sheetCF: cleanCF,
         sheetPF: cleanPF,
         sheetPP: cleanPP,
+        sheetProd: sheetProd, // Cleaned for Sheet
         
         // Notes handled separately
         sheetNotes,
@@ -696,9 +720,10 @@ async function processBranch(params) {
         fmdHeader, filteredFinanceMissingDocs,
         ppHeader, filteredProjectPayments,
         permitsHeader, filteredProjectsPermits,
+        prodHeader, filteredProjectProduction,
         
         // Cleaned sets for Spreadsheet
-        sheetProjects, sheetCustomers, sheetCF, sheetPF, sheetPP, sheetNotes,
+        sheetProjects, sheetCustomers, sheetCF, sheetPF, sheetPP, sheetProd, sheetNotes,
         
         // HTML specific (notes)
         htmlNotes 
@@ -714,6 +739,7 @@ async function processBranch(params) {
     if (fmdHeader) await writeSheet(sheets, newSheetId, 'Finance Missing Documents', fmdHeader, filteredFinanceMissingDocs);
     if (sheetPP) await writeSheet(sheets, newSheetId, 'Project Payments', sheetPP.header, sheetPP.rows);
     if (permitsHeader) await writeSheet(sheets, newSheetId, 'Projects Permits', permitsHeader, filteredProjectsPermits);
+    if (sheetProd) await writeSheet(sheets, newSheetId, 'Project Production', sheetProd.header, sheetProd.rows);
     if (sheetNotes) await writeSheet(sheets, newSheetId, 'Notes', sheetNotes.header, sheetNotes.rows);
 
     // Remove default blank sheet
@@ -723,6 +749,68 @@ async function processBranch(params) {
             requests: [{ deleteSheet: { sheetId: 0 } }]
         }
     });
+
+    // --- GENERATE & UPLOAD HTML REPORT (MOVED UP) ---
+    console.log('Generating HTML Report...');
+    const htmlContent = generateHtmlReport({
+        customers: { header: cHeader, rows: filteredCustomers },
+        projects: { header: pHeader, rows: filteredProjects },
+        missingDocs: { header: mdHeader, rows: filteredMissingDocs },
+        projectFinance: { header: pfHeader, rows: filteredProjectFinance },
+        customerFinance: { header: cfHeader, rows: filteredCustomerFinance },
+        financeMissingDocs: { header: fmdHeader, rows: filteredFinanceMissingDocs },
+        projectPayments: { header: ppHeader, rows: filteredProjectPayments },
+        projectsPermits: { header: permitsHeader, rows: filteredProjectsPermits },
+        projectProduction: { header: prodHeader, rows: filteredProjectProduction },
+        notes: { header: htmlNotes.header, rows: htmlNotes.rows },
+        branchName
+    });
+
+    // Upload HTML to Drive (Overwrite logic)
+    let htmlLink = '';
+    try {
+        const reportName = `${branchName} - Report.html`;
+        const existingReports = await drive.files.list({
+             q: `'${branchFolderId}' in parents and name='${reportName}' and trashed=false`,
+             fields: 'files(id, name)'
+        });
+        
+        let fileId;
+        if (existingReports.data.files.length > 0) {
+            console.log(`Overwriting existing HTML report: ${existingReports.data.files[0].id}`);
+            fileId = existingReports.data.files[0].id;
+            await drive.files.update({
+                fileId: fileId,
+                media: {
+                    mimeType: 'text/html',
+                    body: htmlContent
+                }
+            });
+        } else {
+            console.log('Creating new HTML report...');
+            const fileRes = await drive.files.create({
+                resource: {
+                    name: reportName,
+                    parents: [branchFolderId]
+                },
+                media: {
+                    mimeType: 'text/html',
+                    body: htmlContent
+                },
+                fields: 'id'
+            });
+            fileId = fileRes.data.id;
+        }
+        htmlLink = `${HTML_VIEWER_URL}?id=${fileId}`;
+        console.log('HTML Report generated:', htmlLink);
+    } catch (err) {
+        console.error('Failed to create/update HTML report:', err.message);
+    }
+
+    // Update AppSheet with HTML Link immediately
+    if (htmlLink) {
+        await updateAppSheet(branchId, { html: htmlLink });
+    }
 
     // 4) Extract project folder IDs from projectsData URLs and map to Customer IDs
     const projectFoldersByCustomer = {};
@@ -850,70 +938,10 @@ async function processBranch(params) {
     // Generate Summary String
     const summaryText = `Completed: ${successCount} success, ${errorCount} failed. Added ${syncStats.newFiles} files, skipped ${syncStats.skippedFiles}. Duration: ${durationStr}. ${errors.length > 0 ? 'Errors: ' + errors.map(e => e.customer).join(', ') : ''}`;
 
-    // Generate HTML Report
-    const htmlContent = generateHtmlReport({
-        customers: { header: cHeader, rows: filteredCustomers },
-        projects: { header: pHeader, rows: filteredProjects },
-        missingDocs: { header: mdHeader, rows: filteredMissingDocs },
-        projectFinance: { header: pfHeader, rows: filteredProjectFinance },
-        customerFinance: { header: cfHeader, rows: filteredCustomerFinance },
-        financeMissingDocs: { header: fmdHeader, rows: filteredFinanceMissingDocs },
-        projectPayments: { header: ppHeader, rows: filteredProjectPayments },
-        projectsPermits: { header: permitsHeader, rows: filteredProjectsPermits },
-        notes: { header: htmlNotes.header, rows: htmlNotes.rows }, // Use HTML specific notes (with PID)
-        branchName
-    });
-
-    // Upload HTML to Drive
-    let htmlLink = '';
-    try {
-        const reportName = `${branchName} - Report.html`;
-        // Check if report exists
-        const existingReports = await drive.files.list({
-             q: `'${branchFolderId}' in parents and name='${reportName}' and trashed=false`,
-             fields: 'files(id, name)'
-        });
-        
-        let fileId;
-        if (existingReports.data.files.length > 0) {
-            console.log(`Overwriting existing HTML report: ${existingReports.data.files[0].id}`);
-            fileId = existingReports.data.files[0].id;
-            await drive.files.update({
-                fileId: fileId,
-                media: {
-                    mimeType: 'text/html',
-                    body: htmlContent
-                }
-            });
-        } else {
-            console.log('Creating new HTML report...');
-            const fileRes = await drive.files.create({
-                resource: {
-                    name: reportName,
-                    parents: [branchFolderId]
-                },
-                media: {
-                    mimeType: 'text/html',
-                    body: htmlContent
-                },
-                fields: 'id'
-            });
-            fileId = fileRes.data.id;
-        }
-        
-        // Construct the proxy viewer link
-        htmlLink = `${HTML_VIEWER_URL}?id=${fileId}`;
-        
-        console.log('HTML Report generated:', htmlLink);
-    } catch (err) {
-        console.error('Failed to create HTML report:', err.message);
-    }
-
-    // 6) Final Update to AppSheet (Summary + HTML Link)
+    // 6) Final Update to AppSheet (Summary)
     console.log('Sending summary to AppSheet...');
-    const apiResult = await updateAppSheet(branchId, {
-        ScriptSummary: summaryText,
-        html: htmlLink
+    await updateAppSheet(branchId, {
+        ScriptSummary: summaryText
     });
 
     // 7) Log the attempt (include error summary)

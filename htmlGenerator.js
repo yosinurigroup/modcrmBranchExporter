@@ -91,15 +91,31 @@ function generateHtmlReport(data) {
         projectPayments,
         projectsPermits,
         notes,
+        courses,
+        projectProduction, // New
         branchName 
     } = data;
 
     // Define exclusion lists for HTML VIEW (passed by user request)
+    // PROJ PROD: We only want to KEEP specific columns. Using getFilteredTable logic requires exclusions?
+    // User asked "with following columns only". 
+    // It's easier to filter logically by "Keep List" as we did in filterData.
+    // But since getFilteredTable uses exclusion, we'll implement a simple "Keep" helper or reuse getFilteredTable with a massive exclude list?
+    // Simpler: PROJ_PROD_COLUMNS constant and use it for filtering.
+    // The previous tables used "exclude".
+    
     const exclude = {
         cf: ["customerFinanceID", "Customer ID", "ProjectID", "Branch"],
         pf: ["projectFinanceID", "customerFinanceID"],
-        pp: ["customerFinanceID", "Record ID", "Customer"]
+        pp: ["customerFinanceID", "Record ID", "Customer"],
+        prod: [] // We will filter PROD by "Keep" logic manually
     };
+    
+    const PROJ_PROD_DISPLAY = [
+        "Job Status", "Vendor", "Equipment Name", "Brand", 
+        "Qty", "Watt", "KW", "Permit", 
+        "Distance (ft)", "SSA", "Completion", "Final"
+    ];
 
     // 1. Map Columns
     const custIndices = mapHeaders(CUSTOMER_COLUMNS, customers.header);
@@ -154,6 +170,7 @@ function generateHtmlReport(data) {
                 projectFinance: [],
                 projectPayments: [],
                 projectsPermits: [],
+                projectProduction: [],
                 notes: []
             });
         }
@@ -174,22 +191,35 @@ function generateHtmlReport(data) {
         });
     }
 
-    const linkToProject = (rows, pidIndex, targetArrayName) => {
-        if (!rows) return;
+    // Production: Search for Project ID column
+    const prodPIdIdx = projectProduction.header ? projectProduction.header.findIndex(h => h && (h.toLowerCase().includes('project id') || h.toLowerCase() === 'pid')) : -1;
+
+    // Helper to link data to projects
+    const linkDataToProject = (rows, pidIndex, targetArrayName) => {
+        if (!rows || pidIndex === -1) return;
         rows.forEach(row => {
             const pId = row[pidIndex];
-            for (const c in customerMap) {
-                const proj = customerMap[c].projects.find(p => p.id === pId);
-                if (proj) { proj[targetArrayName].push(row); break; }
+            if (pId && customerMap) {
+                // Find connection - brute force or optimized
+                // Since we don't have a direct ProjectID -> Project Object hash map available here (it's nested),
+                // we iterate customers. (Optimizable, but data size is small per branch)
+                Object.values(customerMap).forEach(c => {
+                    const match = c.projects.find(p => p.id === pId);
+                    if (match) {
+                        match[targetArrayName].push(row);
+                    }
+                });
             }
         });
     };
 
-    linkToProject(missingDocs.rows, mdPIdIdx, 'missingDocs');
-    linkToProject(projectFinance.rows, pfPIdIdx, 'projectFinance');
-    linkToProject(projectPayments.rows, ppPIdIdx, 'projectPayments');
-    linkToProject(projectsPermits.rows, permitsPIdIdx, 'projectsPermits');
-    linkToProject(notes.rows, notesPIdIdx, 'notes');
+    linkDataToProject(missingDocs.rows, mdPIdIdx, 'missingDocs');
+    linkDataToProject(projectFinance.rows, pfPIdIdx, 'projectFinance');
+    linkDataToProject(projectPayments.rows, ppPIdIdx, 'projectPayments');
+    linkDataToProject(projectsPermits.rows, permitsPIdIdx, 'projectsPermits');
+    linkDataToProject(notes.rows, notesPIdIdx, 'notes');
+    linkDataToProject(projectProduction.rows, prodPIdIdx, 'projectProduction');
+
 
     // 3. Generate HTML
     const dateStr = new Date().toLocaleString();
@@ -386,17 +416,51 @@ function generateHtmlReport(data) {
                                                             </div>
 
                                                             <!-- PERMITS -->
-                                                            <div class="border rounded border-orange-100">
-                                                                <div class="bg-orange-50 px-2 py-1 text-xs font-bold text-orange-700 uppercase border-b border-orange-100">
+                                                            <div class="border rounded border-yellow-100">
+                                                                <div class="bg-yellow-50 px-2 py-1 text-xs font-bold text-yellow-700 uppercase border-b border-yellow-100">
                                                                     Permits ${proj.projectsPermits.length ? `(${proj.projectsPermits.length})` : ''}
                                                                 </div>
                                                                 ${proj.projectsPermits.length > 0 ? 
-                                                                    `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-orange-50">
-                                                                        <thead class="bg-white"><tr>${projectsPermits.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
-                                                                        <tbody class="divide-y divide-orange-50">${proj.projectsPermits.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
-                                                                    </table></div>` : '<div class="p-2 text-xs text-gray-400">No permits found</div>'
+                                                                    (() => {
+                                                                        const filteredPermits = getFilteredTable(projectsPermits.header, proj.projectsPermits, []);
+                                                                        return `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-yellow-50">
+                                                                            <thead class="bg-white"><tr>${filteredPermits.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
+                                                                            <tbody class="divide-y divide-yellow-50">${filteredPermits.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                        </table></div>`;
+                                                                    })() : '<div class="p-2 text-xs text-gray-400">No permits found</div>'
                                                                 }
                                                             </div>
+
+                                                             <!-- PROJECT PRODUCTION -->
+                                                             <div class="border rounded border-orange-100">
+                                                                 <div class="bg-orange-50 px-2 py-1 text-xs font-bold text-orange-700 uppercase border-b border-orange-100">
+                                                                     Production ${proj.projectProduction.length ? `(${proj.projectProduction.length})` : ''}
+                                                                 </div>
+                                                                 ${proj.projectProduction.length > 0 ? 
+                                                                     (() => {
+                                                                         const getIncludedTable = (header, rows, includeList) => {
+                                                                            const indices = [];
+                                                                            const newHeader = [];
+                                                                            includeList.forEach(col => {
+                                                                                const idx = header.findIndex(h => h && h.toLowerCase().trim() === col.toLowerCase().trim());
+                                                                                if (idx !== -1) {
+                                                                                    indices.push(idx);
+                                                                                    newHeader.push(header[idx]);
+                                                                                }
+                                                                            });
+                                                                            const newRows = rows.map(r => indices.map(i => r[i]));
+                                                                            return { header: newHeader, rows: newRows };
+                                                                         };
+
+                                                                         const filteredProd = getIncludedTable(projectProduction.header, proj.projectProduction, PROJ_PROD_DISPLAY);
+                                                                         
+                                                                         return `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-orange-50">
+                                                                             <thead class="bg-white"><tr>${filteredProd.header.map(h=>`<th class="px-2 py-1 text-[10px] text-left text-gray-500">${h}</th>`).join('')}</tr></thead>
+                                                                             <tbody class="divide-y divide-orange-50">${filteredProd.rows.map(r=>`<tr>${r.map(c=>`<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[100px]">${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+                                                                         </table></div>`;
+                                                                     })() : '<div class="p-2 text-xs text-gray-400">No production records</div>'
+                                                                 }
+                                                             </div>
 
                                                             <!-- NOTES -->
                                                             <div class="border rounded border-yellow-100">
