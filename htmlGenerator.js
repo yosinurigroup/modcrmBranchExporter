@@ -2,13 +2,13 @@ const MAX_CELL_LENGTH = 50;
 
 // Requested Column Configurations
 const CUSTOMER_COLUMNS = [
-    "Customer ID", "First Name", "Last Name", "Secondary Name", "Secondary Last Name", 
+    "First Name", "Last Name", "Secondary Name", "Secondary Last Name", 
     "Address", "Unit #", "Phone", "Mobile", "Email", "Date of Birth", "Age", 
-    "Secondary Age", "Senior Citizen", "Customer Files", "Update", "Create By", 
-    "TimeStamp", "Folder Id", "Projects Price SubTotal", "Finance Total Approve", 
+    "Secondary Age", "Senior Citizen", "Customer Files", "Create By", 
+    "TimeStamp", "Projects Price SubTotal", "Finance Total Approve", 
     "Total Loan", "Total Used", "Total Spent", "Total Cost", "Total Profit", 
-    "Last Edit By", "Last Edit On", "Favorit", "Projects Missing Finance Balance", 
-    "Projects Payment Balance", "Money On The Table", "Projects Balance"
+    "Projects Missing Finance Balance", "Projects Payment Balance", 
+    "Money On The Table", "Projects Balance"
 ];
 
 const PROJECT_COLUMNS = [
@@ -376,7 +376,8 @@ function generateHtmlReport(data) {
                                                                         <tbody class="divide-y divide-yellow-50">
                                                                             ${proj.notes.map(r => `<tr>${r.map((c, i) => {
                                                                                 if (i === notesPIdIdx) return '';
-                                                                                return `<td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-[300px] whitespace-normal">${escapeHtml(c)}</td>`;
+                                                                                // Modified styling: min-w for compactness but whitespace-normal for wrapping
+                                                                                return `<td class="px-2 py-1 text-[10px] text-gray-600 min-w-[80px] max-w-[200px] whitespace-normal break-words leading-tight">${escapeHtml(c)}</td>`;
                                                                             }).join('')}</tr>`).join('')}
                                                                         </tbody>
                                                                     </table></div>` : '<div class="p-2 text-xs text-gray-400">No notes</div>'

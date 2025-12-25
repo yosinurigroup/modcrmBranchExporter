@@ -480,6 +480,14 @@ async function filterData(drive, sheets, customersData, branchName) {
     const htmlRemoveList = notesRemoveList.filter(c => c.toLowerCase() !== 'projectid');
     const htmlNotes = filterColumns(notesHeader, filteredNotes, htmlRemoveList);
 
+    // --- PROCESS CUSTOMER COLUMNS ---
+    const custRemoveList = ["Customer ID", "Update", "Folder Id", "Last Edit By", "Last Edit On", "Favorit"];
+    const sheetCustomers = filterColumns(cHeader, filteredCustomers, custRemoveList);
+    // For HTML we actually use the full row internally but only render specific columns defined in htmlGenerator.
+    // However, if we want to be consistent, we can just pass the raw filteredCustomers to HTML generator
+    // and let it pick what it needs based on its header list, which we updated in htmlGenerator.js.
+    // But for the spreadsheet write, we want to use the filtered version.
+
     console.log(`Filtered: MD=${filteredMissingDocs.length}, PF=${filteredProjectFinance.length}, PP=${filteredProjectPayments.length}, Permits=${filteredProjectsPermits.length}, Notes=${filteredNotes.length}, CF=${filteredCustomerFinance.length}, FMD=${filteredFinanceMissingDocs.length}`);
 
     return { 
@@ -492,9 +500,10 @@ async function filterData(drive, sheets, customersData, branchName) {
         ppHeader, filteredProjectPayments,
         permitsHeader, filteredProjectsPermits,
         
-        // Return distinct sets for Notes
+        // Return distinct sets
         sheetNotes,
-        htmlNotes
+        htmlNotes,
+        sheetCustomers
     };
 }
 
@@ -640,11 +649,18 @@ async function processBranch(params) {
         fmdHeader, filteredFinanceMissingDocs,
         ppHeader, filteredProjectPayments,
         permitsHeader, filteredProjectsPermits,
-        sheetNotes, htmlNotes // Destructure new objects
+        sheetNotes, htmlNotes, sheetCustomers // Destructure new objects
     } = await filterData(drive, sheets, params.customersData, branchName);
     
     await writeSheet(sheets, newSheetId, 'Projects', pHeader, filteredProjects);
-    await writeSheet(sheets, newSheetId, 'Customers', cHeader, filteredCustomers);
+    
+    // Write Cleaned Customers to Sheet
+    if (sheetCustomers.header && sheetCustomers.header.length > 0) {
+        await writeSheet(sheets, newSheetId, 'Customers', sheetCustomers.header, sheetCustomers.rows);
+    } else {
+        // Fallback if needed, though we expect header
+        await writeSheet(sheets, newSheetId, 'Customers', cHeader, filteredCustomers);
+    }
     
     if (mdHeader) await writeSheet(sheets, newSheetId, 'Missing Documents', mdHeader, filteredMissingDocs);
     if (pfHeader) await writeSheet(sheets, newSheetId, 'Project Finance', pfHeader, filteredProjectFinance);
