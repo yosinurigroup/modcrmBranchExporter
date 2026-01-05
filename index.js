@@ -779,28 +779,71 @@ async function processBranch(params) {
     } = await filterData(drive, sheets, params.customersData, branchName);
     
     // --- PROCESS VENDOR INVOICES UPLOADS ---
+    // Copy invoices to project-specific folders (under project folder / Vendor Invoices)
     if (vendorInvoicesHeader && filteredVendorInvoices.length > 0) {
-        console.log('Processing Vendor Invoice Uploads...');
+        console.log('Processing Vendor Invoice Uploads (to project folders)...');
         const invUploadIdx = vendorInvoicesHeader.findIndex(h => h && h.toLowerCase().trim() === 'invoice upload');
+        const projAddressIdx = vendorInvoicesHeader.findIndex(h => h && h.toLowerCase().trim() === 'project address');
         
-        if (invUploadIdx !== -1) {
-            // 1. Create Target Folder
-            const invoicesFolderId = await getOrCreateFolder(drive, branchFolderId, 'Vendor Invoices', false);
-            console.log(`Using Vendor Invoices folder: ${invoicesFolderId}`);
+        if (invUploadIdx !== -1 && projAddressIdx !== -1) {
+            // Build a cache of project folders by searching under branch folder
+            // Project folders are named like: "123 Main St, City, STATE ZIP, USA-PROJECTID"
+            console.log('Building project folder cache...');
+            const projectFoldersRes = await drive.files.list({
+                q: `'${branchFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+                fields: 'files(id, name)',
+                pageSize: 1000
+            });
+            
+            // For each customer folder, get project subfolders
+            const projectFolderCache = {}; // Map project address -> folder ID
+            for (const customerFolder of projectFoldersRes.data.files) {
+                const projectsRes = await drive.files.list({
+                    q: `'${customerFolder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+                    fields: 'files(id, name)',
+                    pageSize: 100
+                });
+                for (const projFolder of projectsRes.data.files) {
+                    // Project folder name format: "Address-ProjectID" 
+                    // Extract address part (everything before the last dash and ID)
+                    const folderName = projFolder.name;
+                    // The address is everything up to the last "-XXXXXXXX" suffix
+                    const lastDashIdx = folderName.lastIndexOf('-');
+                    if (lastDashIdx > 0) {
+                        const addressPart = folderName.substring(0, lastDashIdx).trim();
+                        projectFolderCache[addressPart.toLowerCase()] = {
+                            id: projFolder.id,
+                            name: folderName,
+                            customerId: customerFolder.id
+                        };
+                    }
+                }
+            }
+            console.log(`Found ${Object.keys(projectFolderCache).length} project folders`);
 
-            // 2. Iterate and Copy
-            // Use pLimit for concurrency
+            // Process each invoice
             const uploadLimit = pLimit(5);
             const uploadTasks = filteredVendorInvoices.map(row => uploadLimit(async () => {
                 const rawVal = row[invUploadIdx];
-                if (!rawVal || typeof rawVal !== 'string') return;
-
-                // Typical value: /Vendors/Vendor Invoice Uploads/5ddaf79b.Invoice Upload.014443._19244.pdf
-                // force split by '/' to handle AppSheet path format regardless of OS
-                const filename = rawVal.split('/').pop();
-                if (!filename) return; 
+                const projectAddress = row[projAddressIdx];
                 
-                // console.log(`Searching for: ${filename}`); // Debug
+                if (!rawVal || typeof rawVal !== 'string') return;
+                if (!projectAddress) {
+                    console.log(`Invoice has no project address, skipping`);
+                    return;
+                }
+
+                const filename = rawVal.split('/').pop();
+                if (!filename) return;
+
+                // Find project folder by address
+                const projectAddrClean = projectAddress.toString().trim().toLowerCase();
+                const projectFolder = projectFolderCache[projectAddrClean];
+                
+                if (!projectFolder) {
+                    console.log(`Project folder not found for address: ${projectAddress}`);
+                    return;
+                }
 
                 try {
                     // Search in Source Folder
@@ -815,26 +858,25 @@ async function processBranch(params) {
                     if (res.data.files.length > 0) {
                         const sourceFile = res.data.files[0];
                         
-                        // Check if already copied to destination to avoid duplicates?
-                        // For sync efficiency, check overlap.
-                        const existQ = `'${invoicesFolderId}' in parents and name = '${filename}' and trashed = false`;
+                        // Create/get Vendor Invoices subfolder inside project folder
+                        const vendorInvFolderId = await getOrCreateFolder(drive, projectFolder.id, 'Vendor Invoices', false);
+                        
+                        // Check if already copied
+                        const existQ = `'${vendorInvFolderId}' in parents and name = '${filename}' and trashed = false`;
                         const existRes = await drive.files.list({ q: existQ, fields: 'files(id, webViewLink)' });
 
                         let finalLink = '';
                         if (existRes.data.files.length > 0) {
-                           // Exists
-                           // console.log(`Skipping existing invoice: ${filename}`);
-                           finalLink = existRes.data.files[0].webViewLink;
+                            finalLink = existRes.data.files[0].webViewLink;
                         } else {
-                           // Copy
-                           console.log(`Copying invoice: ${filename}`);
-                           const copyRes = await drive.files.copy({
-                               fileId: sourceFile.id,
-                               requestBody: { parents: [invoicesFolderId] },
-                               fields: 'id, webViewLink',
-                               supportsAllDrives: true
-                           });
-                           finalLink = copyRes.data.webViewLink;
+                            console.log(`Copying invoice to ${projectFolder.name}: ${filename}`);
+                            const copyRes = await drive.files.copy({
+                                fileId: sourceFile.id,
+                                requestBody: { parents: [vendorInvFolderId] },
+                                fields: 'id, webViewLink',
+                                supportsAllDrives: true
+                            });
+                            finalLink = copyRes.data.webViewLink;
                         }
 
                         // UPDATE ROW DATA IN PLACE
@@ -848,6 +890,8 @@ async function processBranch(params) {
             }));
             
             await Promise.all(uploadTasks);
+        } else {
+            console.log('Missing required columns for vendor invoice processing (Invoice Upload or Project Address)');
         }
     }
 
