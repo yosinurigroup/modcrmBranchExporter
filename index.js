@@ -842,6 +842,30 @@ async function processBranch(params) {
             }
             console.log(`Found ${Object.keys(projectFolderCache).length} project folders`);
 
+            // PRE-CREATE "Vendor Invoices" folders for all projects that have invoices (avoid race conditions)
+            console.log('Pre-creating Vendor Invoices folders...');
+            const projectsWithInvoices = new Set();
+            filteredVendorInvoices.forEach(row => {
+                const projectAddress = row[projAddressIdx];
+                if (projectAddress) {
+                    projectsWithInvoices.add(projectAddress.toString().trim().toLowerCase());
+                }
+            });
+            
+            // Create Vendor Invoices folder for each project (sequentially to avoid duplicates)
+            for (const projectAddr of projectsWithInvoices) {
+                const projectFolder = projectFolderCache[projectAddr];
+                if (projectFolder && !projectFolder.vendorInvoicesFolderId) {
+                    const folderId = await getOrCreateFolder(drive, projectFolder.id, 'Vendor Invoices', false);
+                    projectFolder.vendorInvoicesFolderId = folderId;
+                }
+            }
+            console.log(`Pre-created Vendor Invoices folders for ${projectsWithInvoices.size} projects`);
+
+            // Cache for vendor name folders (to avoid duplicates within same project)
+            // Key: "projectAddr|vendorName" -> folder ID
+            const vendorNameFolderCache = {};
+
             // Process each invoice
             const uploadLimit = pLimit(5);
             const uploadTasks = filteredVendorInvoices.map(row => uploadLimit(async () => {
@@ -888,9 +912,16 @@ async function processBranch(params) {
                     if (res.data.files.length > 0) {
                         const sourceFile = res.data.files[0];
                         
-                        // Create folder structure: Project / Vendor Invoices / Vendor Name
-                        const vendorInvFolderId = await getOrCreateFolder(drive, projectFolder.id, 'Vendor Invoices', false);
-                        const vendorNameFolderId = await getOrCreateFolder(drive, vendorInvFolderId, vendorName, false);
+                        // Use pre-created Vendor Invoices folder
+                        const vendorInvFolderId = projectFolder.vendorInvoicesFolderId;
+                        
+                        // Get or create vendor name subfolder (with caching)
+                        const cacheKey = `${projectAddrClean}|${vendorName}`;
+                        let vendorNameFolderId = vendorNameFolderCache[cacheKey];
+                        if (!vendorNameFolderId) {
+                            vendorNameFolderId = await getOrCreateFolder(drive, vendorInvFolderId, vendorName, false);
+                            vendorNameFolderCache[cacheKey] = vendorNameFolderId;
+                        }
                         
                         // Check if already copied
                         const existQ = `'${vendorNameFolderId}' in parents and name = '${filename}' and trashed = false`;
