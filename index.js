@@ -779,11 +779,32 @@ async function processBranch(params) {
     } = await filterData(drive, sheets, params.customersData, branchName);
     
     // --- PROCESS VENDOR INVOICES UPLOADS ---
-    // Copy invoices to project-specific folders (under project folder / Vendor Invoices)
+    // Copy invoices to project-specific folders (under project folder / Vendor Invoices / Vendor Name)
     if (vendorInvoicesHeader && filteredVendorInvoices.length > 0) {
-        console.log('Processing Vendor Invoice Uploads (to project folders)...');
+        console.log('Processing Vendor Invoice Uploads (to project/vendor folders)...');
         const invUploadIdx = vendorInvoicesHeader.findIndex(h => h && h.toLowerCase().trim() === 'invoice upload');
         const projAddressIdx = vendorInvoicesHeader.findIndex(h => h && h.toLowerCase().trim() === 'project address');
+        const vendorIdx = vendorInvoicesHeader.findIndex(h => h && h.toLowerCase().trim() === 'vendor');
+        
+        // Build vendor name lookup from vendors data
+        // vendorsHeader has columns, filteredVendors has rows
+        // Need to find "Vendor Name" column and "Row ID" column (which matches the Vendor column in invoices)
+        const vendorNameLookup = {}; // Map vendor ID -> vendor name
+        if (vendorsHeader && filteredVendors.length > 0) {
+            const vendorIdIdx = vendorsHeader.findIndex(h => h && (h.toLowerCase().trim() === 'row id' || h.toLowerCase().trim() === 'vendor id'));
+            const vendorNameIdx = vendorsHeader.findIndex(h => h && h.toLowerCase().trim() === 'vendor name');
+            
+            if (vendorIdIdx !== -1 && vendorNameIdx !== -1) {
+                filteredVendors.forEach(row => {
+                    const vid = row[vendorIdIdx];
+                    const vname = row[vendorNameIdx];
+                    if (vid && vname) {
+                        vendorNameLookup[vid] = vname;
+                    }
+                });
+            }
+            console.log(`Built vendor name lookup with ${Object.keys(vendorNameLookup).length} vendors`);
+        }
         
         if (invUploadIdx !== -1 && projAddressIdx !== -1) {
             // Build a cache of project folders by searching under branch folder
@@ -826,6 +847,7 @@ async function processBranch(params) {
             const uploadTasks = filteredVendorInvoices.map(row => uploadLimit(async () => {
                 const rawVal = row[invUploadIdx];
                 const projectAddress = row[projAddressIdx];
+                const vendorId = vendorIdx !== -1 ? row[vendorIdx] : null;
                 
                 if (!rawVal || typeof rawVal !== 'string') return;
                 if (!projectAddress) {
@@ -845,6 +867,14 @@ async function processBranch(params) {
                     return;
                 }
 
+                // Get vendor name for subfolder
+                let vendorName = vendorId ? vendorNameLookup[vendorId] : null;
+                if (!vendorName) {
+                    vendorName = vendorId || 'Unknown Vendor'; // Fallback to ID or 'Unknown'
+                }
+                // Clean vendor name for folder naming (remove invalid characters)
+                vendorName = vendorName.toString().replace(/[<>:"/\\|?*]/g, '_').trim();
+
                 try {
                     // Search in Source Folder
                     const q = `'${VENDOR_INVOICES_SOURCE_FOLDER_ID}' in parents and name = '${filename}' and trashed = false`;
@@ -858,21 +888,22 @@ async function processBranch(params) {
                     if (res.data.files.length > 0) {
                         const sourceFile = res.data.files[0];
                         
-                        // Create/get Vendor Invoices subfolder inside project folder
+                        // Create folder structure: Project / Vendor Invoices / Vendor Name
                         const vendorInvFolderId = await getOrCreateFolder(drive, projectFolder.id, 'Vendor Invoices', false);
+                        const vendorNameFolderId = await getOrCreateFolder(drive, vendorInvFolderId, vendorName, false);
                         
                         // Check if already copied
-                        const existQ = `'${vendorInvFolderId}' in parents and name = '${filename}' and trashed = false`;
+                        const existQ = `'${vendorNameFolderId}' in parents and name = '${filename}' and trashed = false`;
                         const existRes = await drive.files.list({ q: existQ, fields: 'files(id, webViewLink)' });
 
                         let finalLink = '';
                         if (existRes.data.files.length > 0) {
                             finalLink = existRes.data.files[0].webViewLink;
                         } else {
-                            console.log(`Copying invoice to ${projectFolder.name}: ${filename}`);
+                            console.log(`Copying invoice to ${projectFolder.name}/${vendorName}: ${filename}`);
                             const copyRes = await drive.files.copy({
                                 fileId: sourceFile.id,
-                                requestBody: { parents: [vendorInvFolderId] },
+                                requestBody: { parents: [vendorNameFolderId] },
                                 fields: 'id, webViewLink',
                                 supportsAllDrives: true
                             });
